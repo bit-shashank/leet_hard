@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { ApiError, createRoom, getDiscoverRooms, joinRoom } from "@/lib/api";
 import { prettyDateTime } from "@/lib/format";
-import { saveRoomToken } from "@/lib/tokens";
+import { clearRoomToken, listSavedRoomCodes, saveRoomToken } from "@/lib/tokens";
 import type { DiscoverRoomResponse, ProblemSource } from "@/lib/types";
 import { AvatarBadge } from "@/components/avatar-badge";
 
@@ -16,12 +16,15 @@ function parseApiError(error: unknown) {
   return "Something went wrong. Please try again.";
 }
 
-function roomStatusClass(status: DiscoverRoomResponse["status"]) {
+function roomStatusClass(status: DiscoverRoomResponse["status"] | "saved") {
   if (status === "active") {
     return "border-emerald-300/40 bg-emerald-500/15 text-emerald-100";
   }
   if (status === "lobby") {
     return "border-cyan-300/40 bg-cyan-500/15 text-cyan-100";
+  }
+  if (status === "saved") {
+    return "border-amber-300/40 bg-amber-500/15 text-amber-100";
   }
   return "border-slate-500/40 bg-slate-600/20 text-slate-200";
 }
@@ -70,6 +73,7 @@ export default function HomePage() {
   const [joinPasscode, setJoinPasscode] = useState("");
 
   const [discoverRooms, setDiscoverRooms] = useState<DiscoverRoomResponse[]>([]);
+  const [savedRoomCodes, setSavedRoomCodes] = useState<string[]>([]);
   const joinSectionRef = useRef<HTMLElement | null>(null);
   const roomCodeInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -78,6 +82,18 @@ export default function HomePage() {
     [easyCount, mediumCount, hardCount],
   );
   const validTotal = totalProblems >= 3 && totalProblems <= 10;
+  const discoverByCode = useMemo(
+    () => new Map(discoverRooms.map((room) => [room.room_code.toUpperCase(), room])),
+    [discoverRooms],
+  );
+  const joinedRooms = useMemo(
+    () =>
+      savedRoomCodes.map((savedRoomCode) => ({
+        roomCode: savedRoomCode,
+        room: discoverByCode.get(savedRoomCode) ?? null,
+      })),
+    [savedRoomCodes, discoverByCode],
+  );
 
   const fetchDiscoverRooms = useCallback(async () => {
     try {
@@ -92,6 +108,10 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    setSavedRoomCodes(listSavedRoomCodes());
+  }, []);
+
+  useEffect(() => {
     void fetchDiscoverRooms();
     const timer = setInterval(() => {
       void fetchDiscoverRooms();
@@ -99,6 +119,14 @@ export default function HomePage() {
 
     return () => clearInterval(timer);
   }, [fetchDiscoverRooms]);
+
+  function addSavedRoomCode(roomCodeToAdd: string) {
+    const normalizedCode = roomCodeToAdd.toUpperCase();
+    setSavedRoomCodes((current) => {
+      if (current.includes(normalizedCode)) return current;
+      return [...current, normalizedCode].sort();
+    });
+  }
 
   async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,6 +154,7 @@ export default function HomePage() {
       });
 
       saveRoomToken(response.room.room_code, response.participant_token);
+      addSavedRoomCode(response.room.room_code);
       router.push(`/room/${response.room.room_code}/lobby`);
     } catch (err) {
       setError(parseApiError(err));
@@ -148,6 +177,7 @@ export default function HomePage() {
       });
 
       saveRoomToken(response.room.room_code, response.participant_token);
+      addSavedRoomCode(response.room.room_code);
       router.push(`/room/${response.room.room_code}/lobby`);
     } catch (err) {
       setError(parseApiError(err));
@@ -160,6 +190,15 @@ export default function HomePage() {
     setRoomCode(code.toUpperCase());
     joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     window.setTimeout(() => roomCodeInputRef.current?.focus(), 150);
+  }
+
+  function openSavedRoom(code: string) {
+    router.push(`/room/${code.toUpperCase()}/lobby`);
+  }
+
+  function forgetSavedRoom(code: string) {
+    clearRoomToken(code);
+    setSavedRoomCodes((current) => current.filter((roomCode) => roomCode !== code.toUpperCase()));
   }
 
   return (
@@ -181,6 +220,85 @@ export default function HomePage() {
           {error}
         </div>
       ) : null}
+
+      <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-100">Joined Rooms</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Rooms saved in this browser for one-click resume.
+            </p>
+          </div>
+        </div>
+
+        {joinedRooms.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {joinedRooms.map(({ roomCode: savedRoomCode, room }) => (
+              <article
+                key={savedRoomCode}
+                className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-400">Room</p>
+                    <h3 className="font-mono text-lg font-semibold tracking-wider text-slate-100">
+                      {savedRoomCode}
+                    </h3>
+                  </div>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room?.status ?? "saved")}`}
+                  >
+                    {room?.status ?? "saved"}
+                  </span>
+                </div>
+
+                <p className="mt-2 text-xs text-slate-400">
+                  {room
+                    ? roomTimingText(room)
+                    : "Not currently discoverable. It may be ended or private."}
+                </p>
+
+                {room ? (
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      E {room.easy_count} · M {room.medium_count} · H {room.hard_count}
+                    </div>
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      {room.participant_count} participants
+                    </div>
+                    <div className="col-span-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      Source: {formatProblemSource(room.problem_source)}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5 text-xs text-slate-300">
+                    Saved in local browser storage.
+                  </div>
+                )}
+
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => openSavedRoom(savedRoomCode)}
+                    className="rounded-lg bg-cyan-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                  >
+                    Open Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => forgetSavedRoom(savedRoomCode)}
+                    className="rounded-lg border border-rose-400/50 px-3 py-1.5 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/15"
+                  >
+                    Forget
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-300">No joined rooms saved in this browser yet.</p>
+        )}
+      </section>
 
       <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

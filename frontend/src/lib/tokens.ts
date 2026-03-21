@@ -18,3 +18,22 @@ export function clearRoomToken(roomCode: string) {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(key(roomCode));
 }
+
+export function listSavedRoomCodes(): string[] {
+  if (typeof window === "undefined") return [];
+
+  const codes = new Set<string>();
+  const keyPrefix = `${PREFIX}:`;
+
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const storageKey = window.localStorage.key(i);
+    if (!storageKey || !storageKey.startsWith(keyPrefix)) continue;
+
+    const code = storageKey.slice(keyPrefix.length).trim().toUpperCase();
+    if (code) {
+      codes.add(code);
+    }
+  }
+
+  return Array.from(codes).sort();
+}

@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+:root {
+  --app-bg: #080e1f;
+  --panel: rgba(15, 23, 42, 0.78);
+  --panel-border: rgba(148, 163, 184, 0.25);
+  --brand: #38bdf8;
+  --brand-soft: #0ea5e9;
+  --good: #22c55e;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+}
+
+@theme inline {
+  --color-app-bg: var(--app-bg);
+  --font-sans: var(--font-sora);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sora), sans-serif;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(56, 189, 248, 0.28), transparent 42%),
+    radial-gradient(circle at 100% 100%, rgba(14, 165, 233, 0.22), transparent 45%),
+    linear-gradient(140deg, #050913 0%, #0a1024 55%, #0d1530 100%);
+}
+
+a {
+  color: inherit;
+}
+
+.table-grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-grid th,
+.table-grid td {
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  text-align: left;
+}
+
+.table-grid th {
+  color: rgba(226, 232, 240, 0.85);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

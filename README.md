@@ -74,6 +74,7 @@ Frontend app: `http://localhost:3000`
 ## Deployment Notes
 - Vercel (frontend): set `NEXT_PUBLIC_API_BASE_URL` to Render backend URL.
 - Render (backend): set all backend env vars; point `DATABASE_URL` to Supabase Postgres.
+- Render Python version: use `3.12.3` (`PYTHON_VERSION=3.12.3`).
 - Supabase: create a Postgres project and use connection URI as `DATABASE_URL`.
 
 Detailed step-by-step production guide:

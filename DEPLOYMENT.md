@@ -29,6 +29,7 @@ DATABASE_URL=postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.
 2. Configure:
 - Root Directory: `backend`
 - Runtime: `Python 3`
+- Python Version: `3.12.3` (important, do not use 3.14 for current dependency set)
 - Build Command: `pip install -r requirements.txt`
 - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Health Check Path: `/health`
@@ -51,6 +52,7 @@ FRONTEND_BASE_URL=https://<YOUR-VERCEL-DOMAIN>.vercel.app
 SYNC_INTERVAL_SECONDS=15
 AVATAR_SYNC_TTL_SECONDS=21600
 MAX_PARTICIPANTS_PER_ROOM=50
+PYTHON_VERSION=3.12.3
 ```
 
 Notes:
@@ -116,6 +118,15 @@ Fix:
 2. Ensure migrations are at head (`20260321_0003`).
 3. Restart backend service.
 
+### Crash on startup with Python 3.14 stack trace (`typing.Union` / SQLAlchemy declarative scan)
+
+Cause: Render defaulted to Python 3.14, while this backend is validated on Python 3.12.
+
+Fix:
+1. Set Render env var `PYTHON_VERSION=3.12.3`.
+2. Keep `backend/.python-version` in repo as `3.12.3`.
+3. Clear build cache and redeploy.
+
 ### Error: CORS blocked in browser
 
 Cause: missing or incorrect `CORS_ORIGINS`.
@@ -140,4 +151,3 @@ For every backend release:
 3. Render starts new app instance.
 4. Verify `/health` and `/api/v1/rooms/discover`.
 5. If backend URL unchanged, frontend usually does not need redeploy unless UI code changed.
-

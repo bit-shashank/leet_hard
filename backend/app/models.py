@@ -35,6 +35,7 @@ class ProblemSource(str, Enum):
     NEETCODE_150 = 'neetcode_150'
     NEETCODE_250 = 'neetcode_250'
     BLIND_75 = 'blind_75'
+    STRIVER_A2Z_SHEET = 'striver_a2z_sheet'
     STRIVER_SDE_SHEET = 'striver_sde_sheet'
 
 

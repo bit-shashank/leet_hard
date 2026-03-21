@@ -45,6 +45,7 @@ function formatProblemSource(source: ProblemSource) {
     neetcode_150: "NeetCode 150",
     neetcode_250: "NeetCode 250",
     blind_75: "Blind 75",
+    striver_a2z_sheet: "Striver A2Z Sheet",
     striver_sde_sheet: "Striver SDE Sheet",
   };
   return labels[source];
@@ -431,6 +432,7 @@ export default function HomePage() {
                   <option value="neetcode_150">NeetCode 150</option>
                   <option value="neetcode_250">NeetCode 250</option>
                   <option value="blind_75">Blind 75</option>
+                  <option value="striver_a2z_sheet">Striver A2Z Sheet</option>
                   <option value="striver_sde_sheet">Striver SDE Sheet</option>
                 </select>
               </label>

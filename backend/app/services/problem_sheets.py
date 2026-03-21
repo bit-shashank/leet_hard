@@ -9,6 +9,7 @@ _EXPECTED_SHEETS = {
     ProblemSource.NEETCODE_150.value,
     ProblemSource.NEETCODE_250.value,
     ProblemSource.BLIND_75.value,
+    ProblemSource.STRIVER_A2Z_SHEET.value,
     ProblemSource.STRIVER_SDE_SHEET.value,
 }
 
@@ -55,4 +56,3 @@ def get_sheet_slugs(source: ProblemSource) -> set[str]:
     if slugs is None:
         raise ValueError(f'Unsupported sheet source: {source.value}')
     return set(slugs)
-

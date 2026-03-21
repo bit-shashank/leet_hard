@@ -4,6 +4,7 @@ export type ProblemSource =
   | "neetcode_150"
   | "neetcode_250"
   | "blind_75"
+  | "striver_a2z_sheet"
   | "striver_sde_sheet";
 
 export type RoomPublic = {

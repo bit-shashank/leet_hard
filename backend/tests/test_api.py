@@ -164,6 +164,22 @@ def test_create_room_problem_source_validation(client):
     assert valid.status_code == 201
     assert valid.json()['room']['problem_source'] == 'neetcode_150'
 
+    a2z_valid = test_client.post(
+        '/api/v1/rooms',
+        json={
+            'host_nickname': 'A2ZHost',
+            'host_leetcode_username': 'a2z_host_lc',
+            'settings': {
+                'easy_count': 1,
+                'medium_count': 2,
+                'hard_count': 0,
+                'problem_source': 'striver_a2z_sheet',
+            },
+        },
+    )
+    assert a2z_valid.status_code == 201
+    assert a2z_valid.json()['room']['problem_source'] == 'striver_a2z_sheet'
+
     invalid = test_client.post(
         '/api/v1/rooms',
         json={

@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import List
@@ -25,9 +26,39 @@ class Settings(BaseSettings):
     avatar_sync_ttl_seconds: int = 21600
     max_participants_per_room: int = 50
 
+    @staticmethod
+    def _normalize_origin(origin: str) -> str:
+        cleaned = origin.strip().strip('"').strip("'")
+        if cleaned.endswith('/'):
+            cleaned = cleaned[:-1]
+        return cleaned
+
     @property
     def cors_origins_list(self) -> List[str]:
-        origins = [origin.strip() for origin in self.cors_origins.split(',') if origin.strip()]
+        raw = self.cors_origins.strip()
+        origins: List[str] = []
+
+        # Support JSON array style env values too:
+        # CORS_ORIGINS=["https://a.vercel.app","http://localhost:3000"]
+        if raw.startswith('['):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                origins = [
+                    self._normalize_origin(str(origin))
+                    for origin in parsed
+                    if str(origin).strip()
+                ]
+
+        if not origins:
+            origins = [
+                self._normalize_origin(origin)
+                for origin in raw.split(',')
+                if origin.strip()
+            ]
+
         return origins or ['*']
 
 

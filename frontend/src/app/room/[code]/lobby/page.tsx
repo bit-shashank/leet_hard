@@ -4,30 +4,19 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
-import { getRoomToken } from "@/lib/tokens";
-import type { ProblemSource, RoomStateResponse } from "@/lib/types";
-import { formatCountdown, prettyDateTime } from "@/lib/format";
-import { SectionCard } from "@/components/section-card";
+import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { SectionCard } from "@/components/section-card";
+import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
+import { formatCountdown, prettyDateTime } from "@/lib/format";
+import { formatProblemSource } from "@/lib/problem-source";
+import type { ProblemSource, RoomStateResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Unable to load room state.";
-}
-
-function formatProblemSource(source: ProblemSource) {
-  const labels: Record<ProblemSource, string> = {
-    random: "Random",
-    neetcode_150: "NeetCode 150",
-    neetcode_250: "NeetCode 250",
-    blind_75: "Blind 75",
-    striver_a2z_sheet: "Striver A2Z Sheet",
-    striver_sde_sheet: "Striver SDE Sheet",
-  };
-  return labels[source];
 }
 
 function toLocalDateTimeValue(value: Date) {
@@ -39,23 +28,12 @@ function toLocalDateTimeValue(value: Date) {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
-function openNativePicker(input: HTMLInputElement) {
-  const pickerCapable = input as HTMLInputElement & { showPicker?: () => void };
-  if (!pickerCapable.showPicker) return;
-  try {
-    pickerCapable.showPicker();
-  } catch {
-    // Some browsers throw when showPicker is called without a valid user gesture.
-    // Ignore and allow native default behavior.
-  }
-}
-
 export default function LobbyPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
   const roomCode = (params.code || "").toUpperCase();
+  const { accessToken, authLoading, me, user } = useAuth();
 
-  const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -75,19 +53,15 @@ export default function LobbyPage() {
   const [passcode, setPasscode] = useState("");
 
   useEffect(() => {
-    setToken(getRoomToken(roomCode));
-  }, [roomCode]);
-
-  useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
   const fetchState = useCallback(async () => {
-    if (!roomCode || !token) return;
+    if (!roomCode || !accessToken) return;
 
     try {
-      const response = await getRoomState(roomCode, token);
+      const response = await getRoomState(roomCode, accessToken);
       setState(response);
       setServerOffsetMs(new Date(response.server_time).getTime() - Date.now());
       setError(null);
@@ -104,10 +78,10 @@ export default function LobbyPage() {
     } finally {
       setLoading(false);
     }
-  }, [roomCode, router, token]);
+  }, [accessToken, roomCode, router]);
 
   useEffect(() => {
-    if (!token) {
+    if (!accessToken) {
       setLoading(false);
       return;
     }
@@ -118,7 +92,7 @@ export default function LobbyPage() {
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [fetchState, token]);
+  }, [accessToken, fetchState]);
 
   useEffect(() => {
     if (!state?.room) return;
@@ -136,11 +110,11 @@ export default function LobbyPage() {
     setFormLoadedForRoom(state.room.id);
   }, [formLoadedForRoom, state]);
 
-  const me = useMemo(
+  const meParticipant = useMemo(
     () => state?.participants.find((participant) => participant.id === state.my_participant_id),
     [state],
   );
-  const isHost = Boolean(me?.is_host);
+  const isHost = Boolean(meParticipant?.is_host);
 
   const totalProblems = useMemo(
     () => easyCount + mediumCount + hardCount,
@@ -156,7 +130,7 @@ export default function LobbyPage() {
 
   async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token || !state) return;
+    if (!accessToken || !state) return;
 
     if (!validTotal) {
       setError("Total problems must be between 3 and 10.");
@@ -172,19 +146,23 @@ export default function LobbyPage() {
     setSaving(true);
     setError(null);
     try {
-      await updateRoomSettings(roomCode, token, {
-        room_title: roomTitle.trim(),
-        settings: {
-          problem_source: problemSource,
-          easy_count: easyCount,
-          medium_count: mediumCount,
-          hard_count: hardCount,
-          strict_check: strictCheck,
-          duration_minutes: durationMinutes,
-          start_at: parsedStartAt.toISOString(),
-          ...(passcode.trim() ? { passcode: passcode.trim() } : {}),
+      await updateRoomSettings(
+        roomCode,
+        accessToken,
+        {
+          room_title: roomTitle.trim(),
+          settings: {
+            problem_source: problemSource,
+            easy_count: easyCount,
+            medium_count: mediumCount,
+            hard_count: hardCount,
+            strict_check: strictCheck,
+            duration_minutes: durationMinutes,
+            start_at: parsedStartAt.toISOString(),
+            ...(passcode.trim() ? { passcode: passcode.trim() } : {}),
+          },
         },
-      });
+      );
       setFormLoadedForRoom(null);
       await fetchState();
     } catch (err) {
@@ -194,15 +172,25 @@ export default function LobbyPage() {
     }
   }
 
-  if (!token) {
+  if (authLoading) {
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
+        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
+          Checking session...
+        </div>
+      </main>
+    );
+  }
+
+  if (!user || !accessToken) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
         <div className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-6 text-amber-100">
-          You are not joined in this room on this browser. Return to{" "}
+          Please sign in to access rooms. Return to{" "}
           <Link href="/" className="font-semibold underline">
             home page
-          </Link>{" "}
-          and join with room code.
+          </Link>
+          .
         </div>
       </main>
     );
@@ -242,7 +230,15 @@ export default function LobbyPage() {
             Back Home
           </Link>
         </div>
+        <p className="mt-2 text-xs text-cyan-200/90">Signed in as @{me?.primary_leetcode_username}</p>
       </header>
+
+      {!state?.my_participant_id ? (
+        <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          You are authenticated but not a participant in this room. Join from the home page with
+          room code.
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
@@ -314,7 +310,6 @@ export default function LobbyPage() {
                   required
                   value={startAtLocal}
                   onChange={(e) => setStartAtLocal(e.target.value)}
-                  onClick={(e) => openNativePicker(e.currentTarget)}
                   className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
@@ -421,9 +416,7 @@ export default function LobbyPage() {
               </div>
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Source:{" "}
-                {state?.room.problem_source
-                  ? formatProblemSource(state.room.problem_source)
-                  : "-"}
+                {state?.room.problem_source ? formatProblemSource(state.room.problem_source) : "-"}
               </div>
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Mix: E{state?.room.easy_count ?? 0} / M{state?.room.medium_count ?? 0} / H
@@ -434,9 +427,6 @@ export default function LobbyPage() {
               </div>
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Strict checking: {state?.room.strict_check ? "On" : "Off"}
-              </div>
-              <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
-                Waiting for host to finalize settings. Room starts automatically at schedule.
               </div>
             </div>
           )}

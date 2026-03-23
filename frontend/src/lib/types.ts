@@ -66,7 +66,6 @@ export type RoomStateResponse = {
 
 export type CreateRoomRequest = {
   room_title: string;
-  host_leetcode_username: string;
   settings: {
     problem_count?: number;
     problem_source: ProblemSource;
@@ -81,20 +80,17 @@ export type CreateRoomRequest = {
 };
 
 export type JoinRoomRequest = {
-  leetcode_username: string;
   passcode?: string;
 };
 
 export type CreateRoomResponse = {
   room: RoomPublic;
   participant: ParticipantPublic;
-  participant_token: string;
 };
 
 export type JoinRoomResponse = {
   room: RoomPublic;
   participant: ParticipantPublic;
-  participant_token: string;
 };
 
 export type HistoryEvent = {
@@ -139,4 +135,38 @@ export type UpdateRoomSettingsRequest = {
 
 export type UpdateRoomSettingsResponse = {
   room: RoomPublic;
+};
+
+export type MeResponse = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  primary_leetcode_username: string | null;
+  profile_complete: boolean;
+};
+
+export type UpdateMeRequest = {
+  display_name?: string | null;
+  primary_leetcode_username?: string | null;
+};
+
+export type DashboardRoomItem = {
+  room_code: string;
+  room_title: string;
+  status: RoomStatus;
+  joined_at: string;
+  my_rank: number | null;
+  my_solved_count: number;
+  starts_at: string | null;
+  ends_at: string | null;
+};
+
+export type DashboardResponse = {
+  rooms_created: number;
+  rooms_joined: number;
+  wins: number;
+  total_solves: number;
+  avg_rank: number | null;
+  recent_rooms: DashboardRoomItem[];
 };

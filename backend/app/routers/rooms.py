@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,7 +19,9 @@ from app.models import (
     SolveEvent,
     SolveEventType,
     SolveSource,
+    User,
 )
+from app.security import get_current_user
 from app.schemas import (
     CreateRoomRequest,
     CreateRoomResponse,
@@ -132,35 +134,34 @@ def _update_room_status_if_expired(room: Room) -> bool:
     return False
 
 
-def _get_participant_from_token(
+def _get_participant_for_user(
     db: Session,
     room: Room,
-    authorization: Optional[str],
+    user_id: str,
     required: bool,
 ) -> Optional[Participant]:
-    if not authorization:
-        if required:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authorization token required'
-            )
-        return None
-
-    token = auth.parse_bearer_token(authorization)
-    token_hash = auth.hash_token(token)
     participant = db.scalar(
         select(Participant).where(
             Participant.room_id == room.id,
-            Participant.token_hash == token_hash,
+            Participant.user_id == user_id,
         )
     )
-
     if not participant and required:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid participant token for this room',
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='You are not a participant in this room',
         )
-
     return participant
+
+
+def _require_primary_leetcode_username(current_user: User) -> str:
+    username = auth.normalize_leetcode_username(current_user.primary_leetcode_username or '')
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Set your primary LeetCode username in profile before creating or joining rooms',
+        )
+    return username
 
 
 def _maybe_refresh_participant_avatar(db: Session, participant: Participant, force: bool = False) -> bool:
@@ -573,6 +574,7 @@ def _parse_status_filters(statuses: str) -> list[RoomStatus]:
 @router.get('/discover', response_model=list[DiscoverRoomResponse])
 def discover_rooms(
     statuses: str = Query(default='lobby,active'),
+    _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     requested_statuses = _parse_status_filters(statuses)
@@ -659,7 +661,10 @@ def discover_rooms(
 
 
 @router.get('', response_model=list[RoomPublic])
-def list_rooms(db: Session = Depends(get_db)):
+def list_rooms(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     rooms = db.scalars(select(Room).order_by(Room.created_at.desc())).all()
 
     dirty = False
@@ -678,13 +683,15 @@ def list_rooms(db: Session = Depends(get_db)):
 
 
 @router.post('', response_model=CreateRoomResponse, status_code=status.HTTP_201_CREATED)
-def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
-    username = auth.normalize_leetcode_username(payload.host_leetcode_username)
+def create_room(
+    payload: CreateRoomRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    username = _require_primary_leetcode_username(current_user)
     room_title = payload.room_title.strip()
     scheduled_start_at = _coerce_utc(payload.settings.start_at)
 
-    if not username:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid host identity')
     if not room_title:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid room title')
     if not scheduled_start_at:
@@ -731,12 +738,12 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
     db.add(room)
     db.flush()
 
-    participant_token = auth.generate_participant_token()
     host = Participant(
         room_id=room.id,
+        user_id=current_user.id,
         nickname=username,
         leetcode_username=username,
-        token_hash=auth.hash_token(participant_token),
+        token_hash=auth.hash_token(auth.generate_participant_token()),
         is_host=True,
     )
     db.add(host)
@@ -752,14 +759,18 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
     return CreateRoomResponse(
         room=_room_to_public(room),
         participant=_participant_to_public(host),
-        participant_token=participant_token,
     )
 
 
 @router.post('/{room_code}/join', response_model=JoinRoomResponse)
-def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(get_db)):
+def join_room(
+    room_code: str,
+    payload: JoinRoomRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     room = _get_room_or_404(db, room_code)
-    username = auth.normalize_leetcode_username(payload.leetcode_username)
+    username = _require_primary_leetcode_username(current_user)
 
     room_dirty = False
     if _maybe_auto_start_room(db, room):
@@ -789,12 +800,24 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
             detail='Room has reached maximum participants',
         )
 
-    participant_token = auth.generate_participant_token()
+    existing_for_user = db.scalar(
+        select(Participant).where(
+            Participant.room_id == room.id,
+            Participant.user_id == current_user.id,
+        )
+    )
+    if existing_for_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='You have already joined this room',
+        )
+
     participant = Participant(
         room_id=room.id,
+        user_id=current_user.id,
         nickname=username,
         leetcode_username=username,
-        token_hash=auth.hash_token(participant_token),
+        token_hash=auth.hash_token(auth.generate_participant_token()),
         is_host=False,
     )
     db.add(participant)
@@ -816,7 +839,6 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
     return JoinRoomResponse(
         room=_room_to_public(room),
         participant=_participant_to_public(participant),
-        participant_token=participant_token,
     )
 
 
@@ -824,11 +846,11 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
 def update_room_settings(
     room_code: str,
     payload: UpdateRoomSettingsRequest,
-    authorization: str = Header(default=''),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     room = _get_room_or_404(db, room_code)
-    participant = _get_participant_from_token(db, room, authorization, required=True)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
 
     if not participant or not participant.is_host:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only host can update settings')
@@ -891,7 +913,7 @@ def update_room_settings(
 @router.post('/{room_code}/start', response_model=StartRoomResponse)
 def start_room(
     room_code: str,
-    authorization: str = Header(default=''),
+    _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     raise HTTPException(
@@ -903,12 +925,12 @@ def start_room(
 @router.get('/{room_code}/state', response_model=RoomStateResponse)
 def get_room_state(
     room_code: str,
-    authorization: Optional[str] = Header(default=None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     room = _get_room_or_404(db, room_code)
 
-    participant = _get_participant_from_token(db, room, authorization, required=False)
+    participant = _get_participant_for_user(db, room, current_user.id, required=False)
 
     dirty = False
     if _maybe_auto_start_room(db, room):
@@ -946,11 +968,11 @@ def get_room_state(
 def toggle_manual_solve(
     room_code: str,
     payload: ManualSolveRequest,
-    authorization: str = Header(default=''),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     room = _get_room_or_404(db, room_code)
-    participant = _get_participant_from_token(db, room, authorization, required=True)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
     if not participant:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unauthorized')
 
@@ -1027,7 +1049,11 @@ def toggle_manual_solve(
 
 
 @router.get('/{room_code}/history', response_model=HistoryResponse)
-def get_room_history(room_code: str, db: Session = Depends(get_db)):
+def get_room_history(
+    room_code: str,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     room = _get_room_or_404(db, room_code)
 
     dirty = False

@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 import string
 from typing import Optional
@@ -8,12 +9,20 @@ from fastapi import HTTPException, status
 from app.config import get_settings
 
 
+LEETCODE_USERNAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
+
+
 def normalize_nickname(value: str) -> str:
     return value.strip()
 
 
 def normalize_leetcode_username(value: str) -> str:
-    return value.strip()
+    cleaned = value.strip()
+    if not cleaned:
+        return ''
+    if not LEETCODE_USERNAME_RE.fullmatch(cleaned):
+        return ''
+    return cleaned
 
 
 def hash_passcode(passcode: str) -> str:

@@ -15,6 +15,12 @@ Follow the order exactly:
 
 1. Create a Supabase project.
 2. From Supabase, copy the Postgres connection string.
+3. In Supabase Auth:
+- Enable **Google** provider.
+- Add redirect URLs:
+  - `http://localhost:3000`
+  - `https://<YOUR-VERCEL-DOMAIN>.vercel.app`
+  - (optional custom domain if used)
 3. Use a SQLAlchemy-compatible URL in backend env:
 
 ```env
@@ -49,6 +55,10 @@ LEETCODE_API_BASE_URL=https://leetcode-api-pied.vercel.app
 APP_TOKEN_SECRET=<long-random-secret>
 CORS_ORIGINS=https://<YOUR-VERCEL-DOMAIN>.vercel.app,http://localhost:3000
 FRONTEND_BASE_URL=https://<YOUR-VERCEL-DOMAIN>.vercel.app
+SUPABASE_URL=https://<PROJECT_REF>.supabase.co
+SUPABASE_JWKS_URL=https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json
+SUPABASE_JWT_AUDIENCE=authenticated
+SUPABASE_JWT_ISSUER=https://<PROJECT_REF>.supabase.co/auth/v1
 SYNC_INTERVAL_SECONDS=15
 AVATAR_SYNC_TTL_SECONDS=21600
 MAX_PARTICIPANTS_PER_ROOM=50
@@ -73,6 +83,8 @@ Notes:
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://<backend-name>.onrender.com
+NEXT_PUBLIC_SUPABASE_URL=https://<PROJECT_REF>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<SUPABASE_ANON_KEY>
 ```
 
 Redeploy frontend after setting env vars.
@@ -92,9 +104,11 @@ Run these checks in order:
 - Confirm homepage loads active/lobby rooms (or empty state without errors).
 
 4. End-to-end:
+- Sign in with Google.
+- Ensure primary LeetCode username is set in dashboard/profile gate.
 - Create room from frontend.
 - Join from second browser/incognito.
-- Start room.
+- Wait for scheduled auto-start (or set near-future time in test).
 - Confirm leaderboard updates.
 
 ## 5) Common Issues and Fixes

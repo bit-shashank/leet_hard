@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { JetBrains_Mono, Sora } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { AuthProvider } from "@/components/auth-provider";
+import { TopNav } from "@/components/top-nav";
 import "./globals.css";
 
 const sora = Sora({
@@ -31,7 +33,10 @@ export default function RootLayout({
       className={`${sora.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-app-bg text-slate-100">
-        {children}
+        <AuthProvider>
+          <TopNav />
+          {children}
+        </AuthProvider>
         <Analytics />
         <SpeedInsights />
       </body>

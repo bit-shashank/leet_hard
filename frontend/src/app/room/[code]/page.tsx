@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
+import { AvatarBadge } from "@/components/avatar-badge";
+import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomState, toggleManualSolve } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
-import { getRoomToken } from "@/lib/tokens";
-import type { ProblemPublic, ProblemSource, RoomStateResponse } from "@/lib/types";
-import { SectionCard } from "@/components/section-card";
-import { AvatarBadge } from "@/components/avatar-badge";
+import { formatProblemSource } from "@/lib/problem-source";
+import type { ProblemPublic, RoomStateResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -18,24 +19,12 @@ function parseApiError(error: unknown) {
   return "Unable to load room state.";
 }
 
-function formatProblemSource(source: ProblemSource) {
-  const labels: Record<ProblemSource, string> = {
-    random: "Random",
-    neetcode_150: "NeetCode 150",
-    neetcode_250: "NeetCode 250",
-    blind_75: "Blind 75",
-    striver_a2z_sheet: "Striver A2Z Sheet",
-    striver_sde_sheet: "Striver SDE Sheet",
-  };
-  return labels[source];
-}
-
 export default function ActiveRoomPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
   const roomCode = (params.code || "").toUpperCase();
+  const { accessToken, authLoading, user } = useAuth();
 
-  const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,19 +33,15 @@ export default function ActiveRoomPage() {
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
 
   useEffect(() => {
-    setToken(getRoomToken(roomCode));
-  }, [roomCode]);
-
-  useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
   const fetchState = useCallback(async () => {
-    if (!token || !roomCode) return;
+    if (!accessToken || !roomCode) return;
 
     try {
-      const response = await getRoomState(roomCode, token);
+      const response = await getRoomState(roomCode, accessToken);
       setState(response);
       setServerOffsetMs(new Date(response.server_time).getTime() - Date.now());
       setError(null);
@@ -73,10 +58,10 @@ export default function ActiveRoomPage() {
     } finally {
       setLoading(false);
     }
-  }, [roomCode, router, token]);
+  }, [accessToken, roomCode, router]);
 
   useEffect(() => {
-    if (!token) {
+    if (!accessToken) {
       setLoading(false);
       return;
     }
@@ -87,9 +72,10 @@ export default function ActiveRoomPage() {
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [fetchState, token]);
+  }, [accessToken, fetchState]);
 
   const solvedSet = useMemo(() => new Set(state?.my_solved_slugs ?? []), [state?.my_solved_slugs]);
+  const canManuallySolve = Boolean(state?.my_participant_id);
 
   const countdown = useMemo(() => {
     if (!state?.room.ends_at) return "00:00:00";
@@ -98,16 +84,20 @@ export default function ActiveRoomPage() {
   }, [nowMs, serverOffsetMs, state?.room.ends_at]);
 
   async function handleToggle(problem: ProblemPublic) {
-    if (!token || !state) return;
+    if (!accessToken || !state || !canManuallySolve) return;
 
     const isSolved = solvedSet.has(problem.title_slug);
 
     try {
       setPendingSlug(problem.title_slug);
-      await toggleManualSolve(roomCode, token, {
-        problem_slug: problem.title_slug,
-        solved: !isSolved,
-      });
+      await toggleManualSolve(
+        roomCode,
+        accessToken,
+        {
+          problem_slug: problem.title_slug,
+          solved: !isSolved,
+        },
+      );
       await fetchState();
     } catch (err) {
       setError(parseApiError(err));
@@ -116,15 +106,25 @@ export default function ActiveRoomPage() {
     }
   }
 
-  if (!token) {
+  if (authLoading) {
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
+        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
+          Checking session...
+        </div>
+      </main>
+    );
+  }
+
+  if (!user || !accessToken) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
         <div className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-6 text-amber-100">
-          Missing participant token for this room. Go back to{" "}
+          Please sign in to access this room. Go back to{" "}
           <Link href="/" className="font-semibold underline">
             home page
-          </Link>{" "}
-          and join again.
+          </Link>
+          .
         </div>
       </main>
     );
@@ -161,14 +161,18 @@ export default function ActiveRoomPage() {
         </div>
         <p className="mt-2 text-xs text-cyan-200/90">
           Source:{" "}
-          {state?.room.problem_source
-            ? formatProblemSource(state.room.problem_source)
-            : "Random"}
+          {state?.room.problem_source ? formatProblemSource(state.room.problem_source) : "Random"}
         </p>
         <p className="mt-1 text-xs text-cyan-200/90">
           Strict checking: {state?.room.strict_check ? "On" : "Off"}
         </p>
       </header>
+
+      {!canManuallySolve ? (
+        <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          You are not a participant in this room, so manual solve actions are disabled.
+        </div>
+      ) : null}
 
       {state?.room.sync_warning ? (
         <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
@@ -200,12 +204,8 @@ export default function ActiveRoomPage() {
                       <p className="text-xs uppercase tracking-wide text-cyan-200">
                         #{problem.frontend_id || "?"} · {problem.difficulty}
                       </p>
-                      <h3 className="text-lg font-semibold text-slate-100">
-                        {problem.title}
-                      </h3>
-                      <p className="mt-1 font-mono text-xs text-slate-400">
-                        {problem.title_slug}
-                      </p>
+                      <h3 className="text-lg font-semibold text-slate-100">{problem.title}</h3>
+                      <p className="mt-1 font-mono text-xs text-slate-400">{problem.title_slug}</p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -219,7 +219,7 @@ export default function ActiveRoomPage() {
                       </a>
                       <button
                         onClick={() => void handleToggle(problem)}
-                        disabled={pendingSlug === problem.title_slug}
+                        disabled={!canManuallySolve || pendingSlug === problem.title_slug}
                         className={`rounded-lg px-3 py-2 text-sm font-semibold transition disabled:opacity-60 ${
                           isSolved
                             ? "bg-emerald-400 text-slate-900 hover:bg-emerald-300"
@@ -259,11 +259,7 @@ export default function ActiveRoomPage() {
                   <td className="font-semibold text-cyan-200">#{entry.rank}</td>
                   <td>
                     <div className="flex items-center gap-2">
-                      <AvatarBadge
-                        name={entry.leetcode_username}
-                        avatarUrl={entry.avatar_url}
-                        size="sm"
-                      />
+                      <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono font-medium text-slate-100">
@@ -284,9 +280,7 @@ export default function ActiveRoomPage() {
                     </div>
                   </td>
                   <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
-                  <td className="text-xs text-slate-300">
-                    {prettyDateTime(entry.last_solved_at)}
-                  </td>
+                  <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
                 </tr>
               ))}
             </tbody>

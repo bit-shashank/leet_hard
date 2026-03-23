@@ -4,51 +4,45 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
+import { AvatarBadge } from "@/components/avatar-badge";
+import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomHistory, getRoomState } from "@/lib/api";
 import { prettyDateTime } from "@/lib/format";
-import { getRoomToken } from "@/lib/tokens";
-import type { HistoryResponse, ProblemSource } from "@/lib/types";
-import { SectionCard } from "@/components/section-card";
-import { AvatarBadge } from "@/components/avatar-badge";
+import { formatProblemSource } from "@/lib/problem-source";
+import type { HistoryResponse } from "@/lib/types";
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Could not load room history.";
 }
 
-function formatProblemSource(source: ProblemSource) {
-  const labels: Record<ProblemSource, string> = {
-    random: "Random",
-    neetcode_150: "NeetCode 150",
-    neetcode_250: "NeetCode 250",
-    blind_75: "Blind 75",
-    striver_a2z_sheet: "Striver A2Z Sheet",
-    striver_sde_sheet: "Striver SDE Sheet",
-  };
-  return labels[source];
-}
-
 export default function RoomHistoryPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
   const roomCode = (params.code || "").toUpperCase();
+  const { accessToken, authLoading, user } = useAuth();
 
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!accessToken) {
+      setLoading(false);
+      return;
+    }
+
     async function loadHistory() {
       try {
-        const response = await getRoomHistory(roomCode);
+        const response = await getRoomHistory(roomCode, accessToken);
         setHistory(response);
         setError(null);
       } catch (err) {
         const maybeApi = err as ApiError;
         if (maybeApi?.status === 400) {
           try {
-            const token = getRoomToken(roomCode);
-            const roomState = await getRoomState(roomCode, token);
+            const roomState = await getRoomState(roomCode, accessToken);
             if (roomState.room.status === "active") {
               router.replace(`/room/${roomCode}`);
               return;
@@ -58,7 +52,7 @@ export default function RoomHistoryPage() {
               return;
             }
           } catch {
-            // Fallback to normal error display.
+            // fallback to normal error display
           }
         }
         setError(parseApiError(err));
@@ -68,9 +62,33 @@ export default function RoomHistoryPage() {
     }
 
     void loadHistory();
-  }, [roomCode, router]);
+  }, [accessToken, roomCode, router]);
 
   const winner = useMemo(() => history?.leaderboard[0] ?? null, [history?.leaderboard]);
+
+  if (authLoading) {
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
+        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
+          Checking session...
+        </div>
+      </main>
+    );
+  }
+
+  if (!user || !accessToken) {
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
+        <div className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-6 text-amber-100">
+          Please sign in to access room history. Return to{" "}
+          <Link href="/" className="font-semibold underline">
+            home page
+          </Link>
+          .
+        </div>
+      </main>
+    );
+  }
 
   if (loading && !history) {
     return (
@@ -117,20 +135,14 @@ export default function RoomHistoryPage() {
         <section className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-5">
           <p className="text-xs uppercase tracking-wide text-emerald-200">Winner</p>
           <div className="mt-2 flex items-center gap-3">
-            <AvatarBadge
-              name={winner.leetcode_username}
-              avatarUrl={winner.avatar_url}
-              size="lg"
-            />
+            <AvatarBadge name={winner.leetcode_username} avatarUrl={winner.avatar_url} size="lg" />
             <h2 className="text-2xl font-semibold text-emerald-100">
               @{winner.leetcode_username} ({winner.solved_count} solved)
             </h2>
           </div>
           <p className="mt-2 text-xs text-emerald-200/90">
             Source:{" "}
-            {history?.room.problem_source
-              ? formatProblemSource(history.room.problem_source)
-              : "Random"}
+            {history?.room.problem_source ? formatProblemSource(history.room.problem_source) : "Random"}
           </p>
           <p className="mt-1 text-xs text-emerald-200/90">
             Strict checking: {history?.room.strict_check ? "On" : "Off"}
@@ -161,11 +173,7 @@ export default function RoomHistoryPage() {
                   <td className="font-semibold text-cyan-200">#{entry.rank}</td>
                   <td>
                     <div className="flex items-center gap-2">
-                      <AvatarBadge
-                        name={entry.leetcode_username}
-                        avatarUrl={entry.avatar_url}
-                        size="sm"
-                      />
+                      <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
                       <div>
                         <span className="font-mono font-medium text-slate-100">
                           @{entry.leetcode_username}
@@ -174,9 +182,7 @@ export default function RoomHistoryPage() {
                     </div>
                   </td>
                   <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
-                  <td className="text-xs text-slate-300">
-                    {prettyDateTime(entry.last_solved_at)}
-                  </td>
+                  <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
                 </tr>
               ))}
             </tbody>

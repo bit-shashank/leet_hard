@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db import engine, normalized_database_url
 from app.models import Base
+from app.routers.me import router as me_router
 from app.routers.rooms import router as rooms_router
 
 
@@ -35,3 +36,4 @@ def health_check():
 
 
 app.include_router(rooms_router, prefix='/api/v1')
+app.include_router(me_router, prefix='/api/v1')

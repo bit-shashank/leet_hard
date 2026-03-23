@@ -1,11 +1,14 @@
 import type {
   CreateRoomRequest,
   CreateRoomResponse,
+  DashboardResponse,
   DiscoverRoomResponse,
   HistoryResponse,
   JoinRoomRequest,
   JoinRoomResponse,
+  MeResponse,
   RoomStateResponse,
+  UpdateMeRequest,
   UpdateRoomSettingsRequest,
   UpdateRoomSettingsResponse,
 } from "@/lib/types";
@@ -29,14 +32,14 @@ async function request<T>(
   opts?: {
     method?: string;
     body?: unknown;
-    token?: string | null;
+    accessToken?: string | null;
   },
 ): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: opts?.method || "GET",
     headers: {
       "Content-Type": "application/json",
-      ...(opts?.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
     },
     body: opts?.body ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
@@ -56,65 +59,91 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-export function createRoom(payload: CreateRoomRequest) {
+export function createRoom(payload: CreateRoomRequest, accessToken: string) {
   return request<CreateRoomResponse>("/api/v1/rooms", {
     method: "POST",
     body: payload,
+    accessToken,
   });
 }
 
-export function getDiscoverRooms(statuses = "lobby,active") {
+export function getDiscoverRooms(accessToken: string, statuses = "lobby,active") {
   const query = new URLSearchParams({ statuses });
-  return request<DiscoverRoomResponse[]>(`/api/v1/rooms/discover?${query.toString()}`);
+  return request<DiscoverRoomResponse[]>(`/api/v1/rooms/discover?${query.toString()}`, {
+    accessToken,
+  });
 }
 
-export function joinRoom(roomCode: string, payload: JoinRoomRequest) {
+export function joinRoom(roomCode: string, payload: JoinRoomRequest, accessToken: string) {
   return request<JoinRoomResponse>(`/api/v1/rooms/${roomCode}/join`, {
     method: "POST",
     body: payload,
+    accessToken,
   });
 }
 
-export function startRoom(roomCode: string, token: string) {
+export function startRoom(roomCode: string, accessToken: string) {
   return request<{ room: RoomStateResponse["room"] }>(
     `/api/v1/rooms/${roomCode}/start`,
     {
       method: "POST",
-      token,
+      accessToken,
     },
   );
 }
 
 export function updateRoomSettings(
   roomCode: string,
-  token: string,
+  accessToken: string,
   payload: UpdateRoomSettingsRequest,
 ) {
   return request<UpdateRoomSettingsResponse>(`/api/v1/rooms/${roomCode}/settings`, {
     method: "PATCH",
-    token,
+    accessToken,
     body: payload,
   });
 }
 
-export function getRoomState(roomCode: string, token?: string | null) {
+export function getRoomState(roomCode: string, accessToken: string) {
   return request<RoomStateResponse>(`/api/v1/rooms/${roomCode}/state`, {
-    token,
+    accessToken,
   });
 }
 
 export function toggleManualSolve(
   roomCode: string,
-  token: string,
+  accessToken: string,
   payload: { problem_slug: string; solved: boolean },
 ) {
   return request<{ ok: boolean }>(`/api/v1/rooms/${roomCode}/solves/manual`, {
     method: "POST",
-    token,
+    accessToken,
     body: payload,
   });
 }
 
-export function getRoomHistory(roomCode: string) {
-  return request<HistoryResponse>(`/api/v1/rooms/${roomCode}/history`);
+export function getRoomHistory(roomCode: string, accessToken: string) {
+  return request<HistoryResponse>(`/api/v1/rooms/${roomCode}/history`, {
+    accessToken,
+  });
+}
+
+export function getMe(accessToken: string) {
+  return request<MeResponse>("/api/v1/me", {
+    accessToken,
+  });
+}
+
+export function updateMe(payload: UpdateMeRequest, accessToken: string) {
+  return request<MeResponse>("/api/v1/me", {
+    method: "PATCH",
+    body: payload,
+    accessToken,
+  });
+}
+
+export function getDashboard(accessToken: string) {
+  return request<DashboardResponse>("/api/v1/me/dashboard", {
+    accessToken,
+  });
 }

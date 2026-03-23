@@ -53,7 +53,6 @@ class RoomSettingsInput(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     room_title: str = Field(min_length=3, max_length=80)
-    host_leetcode_username: str = Field(min_length=1, max_length=40)
     settings: RoomSettingsInput
 
     @field_validator('room_title')
@@ -63,7 +62,6 @@ class CreateRoomRequest(BaseModel):
 
 
 class JoinRoomRequest(BaseModel):
-    leetcode_username: str = Field(min_length=1, max_length=40)
     passcode: Optional[str] = Field(default=None, min_length=4, max_length=32)
 
 
@@ -146,13 +144,11 @@ class RoomStateResponse(BaseModel):
 class CreateRoomResponse(BaseModel):
     room: RoomPublic
     participant: ParticipantPublic
-    participant_token: str
 
 
 class JoinRoomResponse(BaseModel):
     room: RoomPublic
     participant: ParticipantPublic
-    participant_token: str
 
 
 class StartRoomResponse(BaseModel):
@@ -201,3 +197,53 @@ class HistoryResponse(BaseModel):
     problems: List[ProblemPublic]
     leaderboard: List[LeaderboardEntry]
     events: List[HistoryEvent]
+
+
+class MeResponse(BaseModel):
+    id: str
+    email: Optional[str]
+    display_name: Optional[str]
+    avatar_url: Optional[str]
+    primary_leetcode_username: Optional[str]
+    profile_complete: bool
+
+
+class UpdateMeRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    primary_leetcode_username: Optional[str] = Field(default=None, min_length=1, max_length=40)
+
+    @field_validator('display_name')
+    @classmethod
+    def normalize_display_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator('primary_leetcode_username')
+    @classmethod
+    def normalize_leetcode_username(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class DashboardRoomItem(BaseModel):
+    room_code: str
+    room_title: str
+    status: RoomStatus
+    joined_at: datetime
+    my_rank: Optional[int]
+    my_solved_count: int
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+
+
+class DashboardResponse(BaseModel):
+    rooms_created: int
+    rooms_joined: int
+    wins: int
+    total_solves: int
+    avg_rank: Optional[float]
+    recent_rooms: List[DashboardRoomItem]

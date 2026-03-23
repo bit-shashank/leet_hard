@@ -95,16 +95,34 @@ class Room(Base):
     )
 
 
+class User(Base):
+    __tablename__ = 'users'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    primary_leetcode_username: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    participants: Mapped[List['Participant']] = relationship(back_populates='user')
+
+
 class Participant(Base):
     __tablename__ = 'participants'
     __table_args__ = (
         UniqueConstraint('room_id', 'nickname', name='uq_participant_room_nickname'),
         UniqueConstraint('room_id', 'leetcode_username', name='uq_participant_room_username'),
+        UniqueConstraint('room_id', 'user_id', name='uq_participant_room_user'),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     room_id: Mapped[str] = mapped_column(
         String(36), ForeignKey('rooms.id', ondelete='CASCADE'), index=True
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), index=True, nullable=True
     )
     nickname: Mapped[str] = mapped_column(String(50))
     leetcode_username: Mapped[str] = mapped_column(String(50))
@@ -115,6 +133,7 @@ class Participant(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     room: Mapped['Room'] = relationship(back_populates='participants')
+    user: Mapped[Optional['User']] = relationship(back_populates='participants')
     solves: Mapped[List['ParticipantSolve']] = relationship(
         back_populates='participant', cascade='all, delete-orphan'
     )

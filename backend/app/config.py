@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     cors_origins: str = 'http://localhost:3000'
     frontend_base_url: str = 'http://localhost:3000'
+    supabase_url: str = ''
+    supabase_jwks_url: str = ''
+    supabase_jwt_audience: str = 'authenticated'
+    supabase_jwt_issuer: str = ''
 
     sync_interval_seconds: int = 15
     avatar_sync_ttl_seconds: int = 21600

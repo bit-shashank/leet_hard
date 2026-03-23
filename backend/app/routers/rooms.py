@@ -82,6 +82,7 @@ def _room_to_public(room: Room) -> RoomPublic:
         easy_count=room.easy_count,
         medium_count=room.medium_count,
         hard_count=room.hard_count,
+        strict_check=room.strict_check,
         duration_minutes=room.duration_minutes,
         starts_at=room.starts_at,
         ends_at=room.ends_at,
@@ -326,14 +327,91 @@ def _upsert_auto_solve(
     return updated
 
 
+def _participant_solve_window(room: Room, participant: Participant) -> tuple[Optional[datetime], Optional[datetime]]:
+    room_starts_at = _coerce_utc(room.starts_at)
+    room_ends_at = _coerce_utc(room.ends_at)
+    participant_joined_at = _coerce_utc(participant.joined_at)
+
+    solve_window_start = room_starts_at
+    if participant_joined_at is not None:
+        if solve_window_start is None or participant_joined_at > solve_window_start:
+            solve_window_start = participant_joined_at
+
+    return solve_window_start, room_ends_at
+
+
+def _match_accepted_submission_time(
+    submission: dict,
+    problem_slug: str,
+    solve_window_start: Optional[datetime],
+    solve_window_end: Optional[datetime],
+) -> Optional[datetime]:
+    status_display = submission.get('statusDisplay')
+    status_code = submission.get('status')
+    is_accepted = status_display == 'Accepted' or status_code == 10
+    if not is_accepted:
+        return None
+
+    slug = submission.get('titleSlug') or submission.get('title_slug')
+    if not slug or slug != problem_slug:
+        return None
+
+    raw_ts = submission.get('timestamp')
+    if raw_ts is None:
+        return None
+
+    try:
+        solved_at = datetime.fromtimestamp(int(raw_ts), tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+    if solve_window_start and solved_at < solve_window_start:
+        return None
+    if solve_window_end and solved_at > solve_window_end:
+        return None
+
+    return solved_at
+
+
+def _get_strict_verified_solve_time(room: Room, participant: Participant, problem_slug: str) -> datetime:
+    solve_window_start, solve_window_end = _participant_solve_window(room, participant)
+
+    try:
+        submissions = get_recent_submissions(participant.leetcode_username, limit=100)
+    except LeetCodeServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'Strict verification unavailable right now: {exc}',
+        )
+
+    matches: list[datetime] = []
+    for submission in submissions:
+        solved_at = _match_accepted_submission_time(
+            submission=submission,
+            problem_slug=problem_slug,
+            solve_window_start=solve_window_start,
+            solve_window_end=solve_window_end,
+        )
+        if solved_at is not None:
+            matches.append(solved_at)
+
+    if not matches:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                'Strict verification failed: no accepted submission found for this problem '
+                'in your contest window.'
+            ),
+        )
+
+    return min(matches)
+
+
 def _sync_room_solves(db: Session, room: Room) -> None:
     if room.status != RoomStatus.ACTIVE:
         return
 
     now = _utcnow()
-    room_starts_at = _coerce_utc(room.starts_at)
-    room_ends_at = _coerce_utc(room.ends_at)
-
     problem_slugs = set(
         db.scalars(select(RoomProblem.title_slug).where(RoomProblem.room_id == room.id)).all()
     )
@@ -345,11 +423,7 @@ def _sync_room_solves(db: Session, room: Room) -> None:
     errors: list[str] = []
 
     for participant in participants:
-        participant_joined_at = _coerce_utc(participant.joined_at)
-        solve_window_start = room_starts_at
-        if participant_joined_at is not None:
-            if solve_window_start is None or participant_joined_at > solve_window_start:
-                solve_window_start = participant_joined_at
+        solve_window_start, solve_window_end = _participant_solve_window(room, participant)
 
         try:
             submissions = get_recent_submissions(participant.leetcode_username, limit=100)
@@ -358,28 +432,17 @@ def _sync_room_solves(db: Session, room: Room) -> None:
             continue
 
         for submission in submissions:
-            status_display = submission.get('statusDisplay')
-            status_code = submission.get('status')
-            is_accepted = status_display == 'Accepted' or status_code == 10
-            if not is_accepted:
-                continue
-
             problem_slug = submission.get('titleSlug') or submission.get('title_slug')
             if not problem_slug or problem_slug not in problem_slugs:
                 continue
 
-            raw_ts = submission.get('timestamp')
-            if raw_ts is None:
-                continue
-
-            try:
-                solved_at = datetime.fromtimestamp(int(raw_ts), tz=timezone.utc)
-            except (TypeError, ValueError):
-                continue
-
-            if solve_window_start and solved_at < solve_window_start:
-                continue
-            if room_ends_at and solved_at > room_ends_at:
+            solved_at = _match_accepted_submission_time(
+                submission=submission,
+                problem_slug=problem_slug,
+                solve_window_start=solve_window_start,
+                solve_window_end=solve_window_end,
+            )
+            if solved_at is None:
                 continue
 
             _upsert_auto_solve(db, room, participant, problem_slug, solved_at)
@@ -581,6 +644,7 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
         easy_count=payload.settings.easy_count,
         medium_count=payload.settings.medium_count,
         hard_count=payload.settings.hard_count,
+        strict_check=payload.settings.strict_check,
         duration_minutes=payload.settings.duration_minutes,
         status=RoomStatus.LOBBY,
     )
@@ -811,6 +875,9 @@ def toggle_manual_solve(
     )
 
     now = _utcnow()
+    solved_at = now
+    if payload.solved and room.strict_check:
+        solved_at = _get_strict_verified_solve_time(room, participant, payload.problem_slug)
 
     if payload.solved:
         if existing is None:
@@ -819,7 +886,7 @@ def toggle_manual_solve(
                     room_id=room.id,
                     participant_id=participant.id,
                     problem_slug=payload.problem_slug,
-                    first_solved_at=now,
+                    first_solved_at=solved_at,
                     source=SolveSource.MANUAL,
                 )
             )
@@ -830,7 +897,7 @@ def toggle_manual_solve(
                     problem_slug=payload.problem_slug,
                     event_type=SolveEventType.MARKED_SOLVED,
                     source=SolveSource.MANUAL,
-                    event_at=now,
+                    event_at=solved_at,
                 )
             )
     else:

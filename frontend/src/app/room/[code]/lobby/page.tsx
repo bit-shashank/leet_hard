@@ -227,6 +227,12 @@ export default function LobbyPage() {
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+              <span>Strict Checking</span>
+              <span className="font-semibold text-cyan-200">
+                {state?.room.strict_check ? "On" : "Off"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
               <span>Created</span>
               <span className="font-semibold text-cyan-200">
                 {prettyDateTime(state?.room.created_at ?? null)}

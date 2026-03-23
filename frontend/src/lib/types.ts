@@ -16,6 +16,7 @@ export type RoomPublic = {
   easy_count: number;
   medium_count: number;
   hard_count: number;
+  strict_check: boolean;
   duration_minutes: number;
   starts_at: string | null;
   ends_at: string | null;
@@ -72,6 +73,7 @@ export type CreateRoomRequest = {
     easy_count: number;
     medium_count: number;
     hard_count: number;
+    strict_check: boolean;
     duration_minutes: number;
     passcode?: string;
   };

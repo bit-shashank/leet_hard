@@ -125,6 +125,9 @@ export default function RoomHistoryPage() {
               ? formatProblemSource(history.room.problem_source)
               : "Random"}
           </p>
+          <p className="mt-1 text-xs text-emerald-200/90">
+            Strict checking: {history?.room.strict_check ? "On" : "Off"}
+          </p>
         </section>
       ) : null}
 

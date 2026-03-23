@@ -11,8 +11,8 @@ os.environ.setdefault('DATABASE_URL', 'sqlite:///./test_bootstrap.db')
 
 from app.db import get_db
 from app.main import app
-from app.models import Base, Participant, ProblemSource, Room, RoomStatus
-from app.services.leetcode import ProblemSelectionError
+from app.models import Base, Participant, ParticipantSolve, ProblemSource, Room, RoomStatus
+from app.services.leetcode import LeetCodeServiceError, ProblemSelectionError
 
 
 @pytest.fixture()
@@ -110,6 +110,7 @@ def test_create_room_difficulty_validation_and_backcompat(client):
     assert explicit_room['hard_count'] == 1
     assert explicit_room['problem_count'] == 4
     assert explicit_room['problem_source'] == 'random'
+    assert explicit_room['strict_check'] is False
 
     invalid_total = test_client.post(
         '/api/v1/rooms',
@@ -143,6 +144,42 @@ def test_create_room_difficulty_validation_and_backcompat(client):
     assert backcompat_room['hard_count'] == 0
     assert backcompat_room['problem_count'] == 5
     assert backcompat_room['problem_source'] == 'random'
+    assert backcompat_room['strict_check'] is False
+
+
+def test_create_room_strict_check_default_and_explicit(client):
+    test_client, _, _ = client
+
+    default_resp = test_client.post(
+        '/api/v1/rooms',
+        json={
+            'host_nickname': 'DefaultStrict',
+            'host_leetcode_username': 'default_strict_lc',
+            'settings': {
+                'easy_count': 1,
+                'medium_count': 2,
+                'hard_count': 0,
+            },
+        },
+    )
+    assert default_resp.status_code == 201
+    assert default_resp.json()['room']['strict_check'] is False
+
+    explicit_resp = test_client.post(
+        '/api/v1/rooms',
+        json={
+            'host_nickname': 'ExplicitStrict',
+            'host_leetcode_username': 'explicit_strict_lc',
+            'settings': {
+                'easy_count': 1,
+                'medium_count': 2,
+                'hard_count': 0,
+                'strict_check': True,
+            },
+        },
+    )
+    assert explicit_resp.status_code == 201
+    assert explicit_resp.json()['room']['strict_check'] is True
 
 
 def test_create_room_problem_source_validation(client):
@@ -491,3 +528,278 @@ def test_start_room_sheet_source_insufficient_pool_returns_4xx(client):
         headers={'Authorization': f"Bearer {created['participant_token']}"},
     )
     assert response.status_code == 400
+
+
+def test_manual_solve_strict_mode_succeeds_with_verified_submission(client):
+    test_client, SessionTest, monkeypatch = client
+    target_slug = 'add-two-numbers'
+    base_time = datetime.now(timezone.utc)
+    verified_ts = base_time + timedelta(minutes=12)
+    later_ts = base_time + timedelta(minutes=17)
+
+    monkeypatch.setattr(
+        'app.routers.rooms.choose_random_problems_by_source',
+        lambda source, easy_count, medium_count, hard_count: [
+            _make_problem(target_slug, 'Medium', 1),
+            _make_problem('3sum', 'Medium', 2),
+            _make_problem('group-anagrams', 'Medium', 3),
+        ],
+    )
+    monkeypatch.setattr(
+        'app.routers.rooms.get_recent_submissions',
+        lambda username, limit=100: [
+            {
+                'titleSlug': target_slug,
+                'statusDisplay': 'Wrong Answer',
+                'status': 11,
+                'timestamp': int((base_time + timedelta(minutes=8)).timestamp()),
+            },
+            {
+                'titleSlug': target_slug,
+                'statusDisplay': 'Accepted',
+                'status': 10,
+                'timestamp': int(verified_ts.timestamp()),
+            },
+            {
+                'titleSlug': target_slug,
+                'statusDisplay': 'Accepted',
+                'status': 10,
+                'timestamp': int(later_ts.timestamp()),
+            },
+        ],
+    )
+
+    created = _create_room(
+        test_client,
+        settings={
+            'easy_count': 0,
+            'medium_count': 3,
+            'hard_count': 0,
+            'duration_minutes': 60,
+            'strict_check': True,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    _start_room(test_client, room_code, host_token)
+
+    db = SessionTest()
+    room = db.query(Room).filter(Room.room_code == room_code).first()
+    host = db.query(Participant).filter(Participant.room_id == room.id, Participant.is_host.is_(True)).first()
+    room.starts_at = base_time
+    room.ends_at = base_time + timedelta(hours=1)
+    host.joined_at = base_time - timedelta(minutes=1)
+    db.commit()
+    db.close()
+
+    mark = test_client.post(
+        f'/api/v1/rooms/{room_code}/solves/manual',
+        json={'problem_slug': target_slug, 'solved': True},
+        headers={'Authorization': f'Bearer {host_token}'},
+    )
+    assert mark.status_code == 200
+
+    db = SessionTest()
+    room = db.query(Room).filter(Room.room_code == room_code).first()
+    host = db.query(Participant).filter(Participant.room_id == room.id, Participant.is_host.is_(True)).first()
+    solve = (
+        db.query(ParticipantSolve)
+        .filter(
+            ParticipantSolve.room_id == room.id,
+            ParticipantSolve.participant_id == host.id,
+            ParticipantSolve.problem_slug == target_slug,
+        )
+        .first()
+    )
+    assert solve is not None
+    stored = solve.first_solved_at
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=timezone.utc)
+    assert int(stored.timestamp()) == int(verified_ts.timestamp())
+    db.close()
+
+
+def test_manual_solve_strict_mode_fails_when_no_verified_submission(client):
+    test_client, _, monkeypatch = client
+    target_slug = 'add-two-numbers'
+
+    monkeypatch.setattr(
+        'app.routers.rooms.choose_random_problems_by_source',
+        lambda source, easy_count, medium_count, hard_count: [
+            _make_problem(target_slug, 'Medium', 1),
+            _make_problem('3sum', 'Medium', 2),
+            _make_problem('group-anagrams', 'Medium', 3),
+        ],
+    )
+    monkeypatch.setattr(
+        'app.routers.rooms.get_recent_submissions',
+        lambda username, limit=100: [
+            {
+                'titleSlug': target_slug,
+                'statusDisplay': 'Wrong Answer',
+                'status': 11,
+                'timestamp': int(datetime.now(timezone.utc).timestamp()),
+            }
+        ],
+    )
+
+    created = _create_room(
+        test_client,
+        settings={
+            'easy_count': 0,
+            'medium_count': 3,
+            'hard_count': 0,
+            'duration_minutes': 60,
+            'strict_check': True,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    _start_room(test_client, room_code, host_token)
+
+    mark = test_client.post(
+        f'/api/v1/rooms/{room_code}/solves/manual',
+        json={'problem_slug': target_slug, 'solved': True},
+        headers={'Authorization': f'Bearer {host_token}'},
+    )
+    assert mark.status_code == 400
+    assert 'Strict verification failed' in mark.json()['detail']
+
+
+def test_manual_solve_strict_mode_fails_when_submission_outside_window(client):
+    test_client, SessionTest, monkeypatch = client
+    target_slug = 'add-two-numbers'
+    base_time = datetime.now(timezone.utc)
+    submission_ts = base_time + timedelta(minutes=5)
+
+    monkeypatch.setattr(
+        'app.routers.rooms.choose_random_problems_by_source',
+        lambda source, easy_count, medium_count, hard_count: [
+            _make_problem(target_slug, 'Medium', 1),
+            _make_problem('3sum', 'Medium', 2),
+            _make_problem('group-anagrams', 'Medium', 3),
+        ],
+    )
+    monkeypatch.setattr(
+        'app.routers.rooms.get_recent_submissions',
+        lambda username, limit=100: [
+            {
+                'titleSlug': target_slug,
+                'statusDisplay': 'Accepted',
+                'status': 10,
+                'timestamp': int(submission_ts.timestamp()),
+            }
+        ],
+    )
+
+    created = _create_room(
+        test_client,
+        settings={
+            'easy_count': 0,
+            'medium_count': 3,
+            'hard_count': 0,
+            'duration_minutes': 60,
+            'strict_check': True,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    _start_room(test_client, room_code, host_token)
+
+    db = SessionTest()
+    room = db.query(Room).filter(Room.room_code == room_code).first()
+    host = db.query(Participant).filter(Participant.room_id == room.id, Participant.is_host.is_(True)).first()
+    room.starts_at = base_time
+    room.ends_at = base_time + timedelta(hours=1)
+    host.joined_at = base_time + timedelta(minutes=10)
+    db.commit()
+    db.close()
+
+    mark = test_client.post(
+        f'/api/v1/rooms/{room_code}/solves/manual',
+        json={'problem_slug': target_slug, 'solved': True},
+        headers={'Authorization': f'Bearer {host_token}'},
+    )
+    assert mark.status_code == 400
+    assert 'Strict verification failed' in mark.json()['detail']
+
+
+def test_manual_solve_strict_mode_fails_closed_on_submission_api_error(client):
+    test_client, _, monkeypatch = client
+    target_slug = 'add-two-numbers'
+
+    monkeypatch.setattr(
+        'app.routers.rooms.choose_random_problems_by_source',
+        lambda source, easy_count, medium_count, hard_count: [
+            _make_problem(target_slug, 'Medium', 1),
+            _make_problem('3sum', 'Medium', 2),
+            _make_problem('group-anagrams', 'Medium', 3),
+        ],
+    )
+
+    def _raise_submission_error(username: str, limit: int = 100):
+        raise LeetCodeServiceError('upstream down')
+
+    monkeypatch.setattr('app.routers.rooms.get_recent_submissions', _raise_submission_error)
+
+    created = _create_room(
+        test_client,
+        settings={
+            'easy_count': 0,
+            'medium_count': 3,
+            'hard_count': 0,
+            'duration_minutes': 60,
+            'strict_check': True,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    _start_room(test_client, room_code, host_token)
+
+    mark = test_client.post(
+        f'/api/v1/rooms/{room_code}/solves/manual',
+        json={'problem_slug': target_slug, 'solved': True},
+        headers={'Authorization': f'Bearer {host_token}'},
+    )
+    assert mark.status_code == 503
+    assert 'Strict verification unavailable' in mark.json()['detail']
+
+
+def test_manual_solve_non_strict_mode_unchanged(client):
+    test_client, _, monkeypatch = client
+    target_slug = 'add-two-numbers'
+
+    monkeypatch.setattr(
+        'app.routers.rooms.choose_random_problems_by_source',
+        lambda source, easy_count, medium_count, hard_count: [
+            _make_problem(target_slug, 'Medium', 1),
+            _make_problem('3sum', 'Medium', 2),
+            _make_problem('group-anagrams', 'Medium', 3),
+        ],
+    )
+
+    def _raise_submission_error(username: str, limit: int = 100):
+        raise LeetCodeServiceError('should not be called in non-strict mode')
+
+    monkeypatch.setattr('app.routers.rooms.get_recent_submissions', _raise_submission_error)
+
+    created = _create_room(
+        test_client,
+        settings={
+            'easy_count': 0,
+            'medium_count': 3,
+            'hard_count': 0,
+            'duration_minutes': 60,
+            'strict_check': False,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    _start_room(test_client, room_code, host_token)
+
+    mark = test_client.post(
+        f'/api/v1/rooms/{room_code}/solves/manual',
+        json={'problem_slug': target_slug, 'solved': True},
+        headers={'Authorization': f'Bearer {host_token}'},
+    )
+    assert mark.status_code == 200

@@ -65,6 +65,7 @@ export default function HomePage() {
   const [easyCount, setEasyCount] = useState(0);
   const [mediumCount, setMediumCount] = useState(4);
   const [hardCount, setHardCount] = useState(0);
+  const [strictCheck, setStrictCheck] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [createPasscode, setCreatePasscode] = useState("");
 
@@ -149,6 +150,7 @@ export default function HomePage() {
           easy_count: easyCount,
           medium_count: mediumCount,
           hard_count: hardCount,
+          strict_check: strictCheck,
           duration_minutes: durationMinutes,
           ...(createPasscode.trim() ? { passcode: createPasscode.trim() } : {}),
         },
@@ -483,6 +485,21 @@ export default function HomePage() {
                 Allowed range: 3 to 10
               </p>
             </div>
+
+            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-sm text-slate-200">
+              <div>
+                <p className="font-medium text-slate-100">Strict Checking</p>
+                <p className="text-xs text-slate-400">
+                  Verify accepted submission before manual mark solved.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={strictCheck}
+                onChange={(e) => setStrictCheck(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
+              />
+            </label>
 
             <label className="block text-sm text-slate-200">
               Duration (minutes)

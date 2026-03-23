@@ -162,6 +162,9 @@ export default function ActiveRoomPage() {
             ? formatProblemSource(state.room.problem_source)
             : "Random"}
         </p>
+        <p className="mt-1 text-xs text-cyan-200/90">
+          Strict checking: {state?.room.strict_check ? "On" : "Off"}
+        </p>
       </header>
 
       {state?.room.sync_warning ? (

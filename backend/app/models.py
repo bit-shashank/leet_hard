@@ -73,6 +73,7 @@ class Room(Base):
     easy_count: Mapped[int] = mapped_column(Integer, default=0)
     medium_count: Mapped[int] = mapped_column(Integer, default=4)
     hard_count: Mapped[int] = mapped_column(Integer, default=0)
+    strict_check: Mapped[bool] = mapped_column(Boolean, default=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

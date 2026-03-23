@@ -12,6 +12,7 @@ class RoomSettingsInput(BaseModel):
     easy_count: int = Field(default=0, ge=0, le=10)
     medium_count: int = Field(default=4, ge=0, le=10)
     hard_count: int = Field(default=0, ge=0, le=10)
+    strict_check: bool = False
     duration_minutes: int = Field(default=60, ge=15, le=180)
     passcode: Optional[str] = Field(default=None, min_length=4, max_length=32)
 
@@ -81,6 +82,7 @@ class RoomPublic(BaseModel):
     easy_count: int
     medium_count: int
     hard_count: int
+    strict_check: bool
     duration_minutes: int
     starts_at: Optional[datetime]
     ends_at: Optional[datetime]

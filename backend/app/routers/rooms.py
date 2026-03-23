@@ -36,6 +36,8 @@ from app.schemas import (
     RoomPublic,
     RoomStateResponse,
     StartRoomResponse,
+    UpdateRoomSettingsRequest,
+    UpdateRoomSettingsResponse,
 )
 from app.services.leetcode import (
     LeetCodeServiceError,
@@ -76,6 +78,7 @@ def _room_to_public(room: Room) -> RoomPublic:
     return RoomPublic(
         id=room.id,
         room_code=room.room_code,
+        room_title=room.room_title,
         status=room.status,
         problem_source=room.problem_source,
         problem_count=room.problem_count,
@@ -84,6 +87,7 @@ def _room_to_public(room: Room) -> RoomPublic:
         hard_count=room.hard_count,
         strict_check=room.strict_check,
         duration_minutes=room.duration_minutes,
+        scheduled_start_at=room.scheduled_start_at,
         starts_at=room.starts_at,
         ends_at=room.ends_at,
         created_at=room.created_at,
@@ -95,7 +99,6 @@ def _room_to_public(room: Room) -> RoomPublic:
 def _participant_to_public(participant: Participant) -> ParticipantPublic:
     return ParticipantPublic(
         id=participant.id,
-        nickname=participant.nickname,
         leetcode_username=participant.leetcode_username,
         avatar_url=participant.avatar_url,
         is_host=participant.is_host,
@@ -205,7 +208,6 @@ def _build_leaderboard(db: Session, room: Room) -> list[LeaderboardEntry]:
     stmt = (
         select(
             Participant.id,
-            Participant.nickname,
             Participant.leetcode_username,
             Participant.avatar_url,
             Participant.is_host,
@@ -241,7 +243,6 @@ def _build_leaderboard(db: Session, room: Room) -> list[LeaderboardEntry]:
             LeaderboardEntry(
                 rank=index,
                 participant_id=row.id,
-                nickname=row.nickname,
                 leetcode_username=row.leetcode_username,
                 avatar_url=row.avatar_url,
                 is_host=row.is_host,
@@ -456,6 +457,66 @@ def _sync_room_solves(db: Session, room: Room) -> None:
         )
 
 
+def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> None:
+    if room.status != RoomStatus.LOBBY:
+        return
+
+    if now is None:
+        now = _utcnow()
+
+    problem_source = room.problem_source
+    if isinstance(problem_source, str):
+        problem_source = ProblemSource(problem_source)
+
+    selected = choose_random_problems_by_source(
+        problem_source,
+        easy_count=room.easy_count,
+        medium_count=room.medium_count,
+        hard_count=room.hard_count,
+    )
+
+    room.starts_at = now
+    room.ends_at = now + timedelta(minutes=room.duration_minutes)
+    room.status = RoomStatus.ACTIVE
+    room.last_synced_at = None
+    room.sync_warning = None
+
+    for order, problem in enumerate(selected, start=1):
+        slug = problem.get('title_slug') or problem.get('titleSlug')
+        db.add(
+            RoomProblem(
+                room_id=room.id,
+                title_slug=slug,
+                title=problem.get('title') or slug or 'Untitled Problem',
+                frontend_id=(str(problem.get('frontend_id')) if problem.get('frontend_id') else None),
+                url=problem.get('url') or f"https://leetcode.com/problems/{slug}/",
+                difficulty=problem.get('difficulty', 'Medium'),
+                sort_order=order,
+            )
+        )
+
+
+def _maybe_auto_start_room(db: Session, room: Room) -> bool:
+    if room.status != RoomStatus.LOBBY:
+        return False
+
+    scheduled_start_at = _coerce_utc(room.scheduled_start_at)
+    now = _utcnow()
+    if scheduled_start_at is None or scheduled_start_at > now:
+        return False
+
+    try:
+        _activate_room(db, room, now=now)
+    except ProblemSelectionError as exc:
+        room.sync_warning = f'Auto-start failed: {exc}'
+        return True
+    except LeetCodeServiceError as exc:
+        room.sync_warning = f'Auto-start failed: {exc}'
+        return True
+
+    return True
+
+
 def _build_room_state(
     db: Session,
     room: Room,
@@ -528,6 +589,8 @@ def discover_rooms(
 
     dirty = False
     for room in rooms:
+        if _maybe_auto_start_room(db, room):
+            dirty = True
         if _update_room_status_if_expired(room):
             dirty = True
 
@@ -574,8 +637,10 @@ def discover_rooms(
         discovered.append(
             DiscoverRoomResponse(
                 room_code=room.room_code,
+                room_title=room.room_title,
                 status=room.status,
                 problem_source=room.problem_source,
+                scheduled_start_at=room.scheduled_start_at,
                 starts_at=room.starts_at,
                 ends_at=room.ends_at,
                 created_at=room.created_at,
@@ -584,7 +649,6 @@ def discover_rooms(
                 medium_count=room.medium_count,
                 hard_count=room.hard_count,
                 participant_count=int(participant_counts.get(room.id, 0)),
-                host_nickname=host.nickname if host else None,
                 host_leetcode_username=host.leetcode_username if host else None,
                 host_avatar_url=host.avatar_url if host else None,
                 joinable=joinable,
@@ -600,6 +664,8 @@ def list_rooms(db: Session = Depends(get_db)):
 
     dirty = False
     for room in rooms:
+        if _maybe_auto_start_room(db, room):
+            dirty = True
         if _update_room_status_if_expired(room):
             dirty = True
 
@@ -613,11 +679,23 @@ def list_rooms(db: Session = Depends(get_db)):
 
 @router.post('', response_model=CreateRoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
-    nickname = auth.normalize_nickname(payload.host_nickname)
     username = auth.normalize_leetcode_username(payload.host_leetcode_username)
+    room_title = payload.room_title.strip()
+    scheduled_start_at = _coerce_utc(payload.settings.start_at)
 
-    if not nickname or not username:
+    if not username:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid host identity')
+    if not room_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid room title')
+    if not scheduled_start_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid room start time')
+
+    now = _utcnow()
+    if scheduled_start_at < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Room start time must be in the future',
+        )
 
     room_code = None
     for _ in range(20):
@@ -638,6 +716,7 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
 
     room = Room(
         room_code=room_code,
+        room_title=room_title,
         passcode_hash=passcode_hash,
         problem_source=payload.settings.problem_source,
         problem_count=total_problem_count,
@@ -646,6 +725,7 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
         hard_count=payload.settings.hard_count,
         strict_check=payload.settings.strict_check,
         duration_minutes=payload.settings.duration_minutes,
+        scheduled_start_at=scheduled_start_at,
         status=RoomStatus.LOBBY,
     )
     db.add(room)
@@ -654,7 +734,7 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
     participant_token = auth.generate_participant_token()
     host = Participant(
         room_id=room.id,
-        nickname=nickname,
+        nickname=username,
         leetcode_username=username,
         token_hash=auth.hash_token(participant_token),
         is_host=True,
@@ -679,10 +759,13 @@ def create_room(payload: CreateRoomRequest, db: Session = Depends(get_db)):
 @router.post('/{room_code}/join', response_model=JoinRoomResponse)
 def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(get_db)):
     room = _get_room_or_404(db, room_code)
-    nickname = auth.normalize_nickname(payload.nickname)
     username = auth.normalize_leetcode_username(payload.leetcode_username)
 
-    room_dirty = _update_room_status_if_expired(room)
+    room_dirty = False
+    if _maybe_auto_start_room(db, room):
+        room_dirty = True
+    if _update_room_status_if_expired(room):
+        room_dirty = True
     if room_dirty:
         db.commit()
         db.refresh(room)
@@ -709,7 +792,7 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
     participant_token = auth.generate_participant_token()
     participant = Participant(
         room_id=room.id,
-        nickname=nickname,
+        nickname=username,
         leetcode_username=username,
         token_hash=auth.hash_token(participant_token),
         is_host=False,
@@ -725,7 +808,7 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Nickname or LeetCode username already exists in this room',
+            detail='LeetCode username already exists in this room',
         )
 
     db.refresh(participant)
@@ -737,9 +820,10 @@ def join_room(room_code: str, payload: JoinRoomRequest, db: Session = Depends(ge
     )
 
 
-@router.post('/{room_code}/start', response_model=StartRoomResponse)
-def start_room(
+@router.patch('/{room_code}/settings', response_model=UpdateRoomSettingsResponse)
+def update_room_settings(
     room_code: str,
+    payload: UpdateRoomSettingsRequest,
     authorization: str = Header(default=''),
     db: Session = Depends(get_db),
 ):
@@ -747,58 +831,73 @@ def start_room(
     participant = _get_participant_from_token(db, room, authorization, required=True)
 
     if not participant or not participant.is_host:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only host can start the room')
-
-    if room.status != RoomStatus.LOBBY:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Room already started')
-
-    problem_source = room.problem_source
-    if isinstance(problem_source, str):
-        problem_source = ProblemSource(problem_source)
-
-    try:
-        selected = choose_random_problems_by_source(
-            problem_source,
-            easy_count=room.easy_count,
-            medium_count=room.medium_count,
-            hard_count=room.hard_count,
-        )
-    except ProblemSelectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-    except LeetCodeServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f'Failed to fetch problem set: {exc}',
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only host can update settings')
 
     now = _utcnow()
-    room.starts_at = now
-    room.ends_at = now + timedelta(minutes=room.duration_minutes)
-    room.status = RoomStatus.ACTIVE
-    room.last_synced_at = None
-    room.sync_warning = None
+    dirty = False
+    if _maybe_auto_start_room(db, room):
+        dirty = True
+    if _update_room_status_if_expired(room):
+        dirty = True
+    if dirty:
+        db.commit()
+        db.refresh(room)
 
-    for order, problem in enumerate(selected, start=1):
-        slug = problem.get('title_slug') or problem.get('titleSlug')
-        db.add(
-            RoomProblem(
-                room_id=room.id,
-                title_slug=slug,
-                title=problem.get('title') or slug or 'Untitled Problem',
-                frontend_id=(str(problem.get('frontend_id')) if problem.get('frontend_id') else None),
-                url=problem.get('url') or f"https://leetcode.com/problems/{slug}/",
-                difficulty=problem.get('difficulty', 'Medium'),
-                sort_order=order,
-            )
+    if room.status != RoomStatus.LOBBY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Room settings can be edited only before room starts',
         )
+
+    current_scheduled_start = _coerce_utc(room.scheduled_start_at)
+    if current_scheduled_start is not None and current_scheduled_start <= now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Scheduled start time has passed. Settings are locked.',
+        )
+
+    room_title = payload.room_title.strip()
+    if not room_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid room title')
+
+    scheduled_start_at = _coerce_utc(payload.settings.start_at)
+    if not scheduled_start_at or scheduled_start_at < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Room start time must be in the future',
+        )
+
+    total_problem_count = (
+        payload.settings.easy_count + payload.settings.medium_count + payload.settings.hard_count
+    )
+
+    room.room_title = room_title
+    room.problem_source = payload.settings.problem_source
+    room.problem_count = total_problem_count
+    room.easy_count = payload.settings.easy_count
+    room.medium_count = payload.settings.medium_count
+    room.hard_count = payload.settings.hard_count
+    room.strict_check = payload.settings.strict_check
+    room.duration_minutes = payload.settings.duration_minutes
+    room.scheduled_start_at = scheduled_start_at
+    if payload.settings.passcode is not None:
+        room.passcode_hash = auth.hash_passcode(payload.settings.passcode)
 
     db.commit()
     db.refresh(room)
+    return UpdateRoomSettingsResponse(room=_room_to_public(room))
 
-    return StartRoomResponse(room=_room_to_public(room))
+
+@router.post('/{room_code}/start', response_model=StartRoomResponse)
+def start_room(
+    room_code: str,
+    authorization: str = Header(default=''),
+    db: Session = Depends(get_db),
+):
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail='Manual start is deprecated. Rooms now auto-start at scheduled time.',
+    )
 
 
 @router.get('/{room_code}/state', response_model=RoomStateResponse)
@@ -811,7 +910,11 @@ def get_room_state(
 
     participant = _get_participant_from_token(db, room, authorization, required=False)
 
-    dirty = _update_room_status_if_expired(room)
+    dirty = False
+    if _maybe_auto_start_room(db, room):
+        dirty = True
+    if _update_room_status_if_expired(room):
+        dirty = True
 
     if _refresh_room_participant_avatars(db, room):
         dirty = True
@@ -928,6 +1031,8 @@ def get_room_history(room_code: str, db: Session = Depends(get_db)):
     room = _get_room_or_404(db, room_code)
 
     dirty = False
+    if _maybe_auto_start_room(db, room):
+        dirty = True
     if _update_room_status_if_expired(room):
         dirty = True
 
@@ -950,8 +1055,8 @@ def get_room_history(room_code: str, db: Session = Depends(get_db)):
         .order_by(RoomProblem.sort_order.asc())
     ).all()
 
-    nickname_by_participant = {
-        participant.id: participant.nickname
+    username_by_participant = {
+        participant.id: participant.leetcode_username
         for participant in db.scalars(select(Participant).where(Participant.room_id == room.id)).all()
     }
 
@@ -964,7 +1069,7 @@ def get_room_history(room_code: str, db: Session = Depends(get_db)):
     history_events = [
         HistoryEvent(
             participant_id=event.participant_id,
-            participant_nickname=nickname_by_participant.get(event.participant_id, 'Unknown'),
+            participant_leetcode_username=username_by_participant.get(event.participant_id, 'unknown'),
             problem_slug=event.problem_slug,
             event_type=event.event_type,
             source=event.source,

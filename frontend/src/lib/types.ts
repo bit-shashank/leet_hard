@@ -10,6 +10,7 @@ export type ProblemSource =
 export type RoomPublic = {
   id: string;
   room_code: string;
+  room_title: string;
   status: RoomStatus;
   problem_source: ProblemSource;
   problem_count: number;
@@ -18,6 +19,7 @@ export type RoomPublic = {
   hard_count: number;
   strict_check: boolean;
   duration_minutes: number;
+  scheduled_start_at: string;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -27,7 +29,6 @@ export type RoomPublic = {
 
 export type ParticipantPublic = {
   id: string;
-  nickname: string;
   leetcode_username: string;
   avatar_url: string | null;
   is_host: boolean;
@@ -46,7 +47,6 @@ export type ProblemPublic = {
 export type LeaderboardEntry = {
   rank: number;
   participant_id: string;
-  nickname: string;
   leetcode_username: string;
   avatar_url: string | null;
   is_host: boolean;
@@ -65,7 +65,7 @@ export type RoomStateResponse = {
 };
 
 export type CreateRoomRequest = {
-  host_nickname: string;
+  room_title: string;
   host_leetcode_username: string;
   settings: {
     problem_count?: number;
@@ -75,12 +75,12 @@ export type CreateRoomRequest = {
     hard_count: number;
     strict_check: boolean;
     duration_minutes: number;
+    start_at: string;
     passcode?: string;
   };
 };
 
 export type JoinRoomRequest = {
-  nickname: string;
   leetcode_username: string;
   passcode?: string;
 };
@@ -99,7 +99,7 @@ export type JoinRoomResponse = {
 
 export type HistoryEvent = {
   participant_id: string;
-  participant_nickname: string;
+  participant_leetcode_username: string;
   problem_slug: string;
   event_type: "marked_solved" | "unmarked" | "auto_detected";
   source: "auto" | "manual";
@@ -115,8 +115,10 @@ export type HistoryResponse = {
 
 export type DiscoverRoomResponse = {
   room_code: string;
+  room_title: string;
   status: RoomStatus;
   problem_source: ProblemSource;
+  scheduled_start_at: string;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -125,8 +127,16 @@ export type DiscoverRoomResponse = {
   medium_count: number;
   hard_count: number;
   participant_count: number;
-  host_nickname: string | null;
   host_leetcode_username: string | null;
   host_avatar_url: string | null;
   joinable: boolean;
+};
+
+export type UpdateRoomSettingsRequest = {
+  room_title: string;
+  settings: CreateRoomRequest["settings"];
+};
+
+export type UpdateRoomSettingsResponse = {
+  room: RoomPublic;
 };

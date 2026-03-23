@@ -89,8 +89,11 @@ export default function RoomHistoryPage() {
           <div>
             <p className="text-sm uppercase tracking-wide text-cyan-200">Final Results</p>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-50">
-              Room {roomCode}
+              {history?.room.room_title}
             </h1>
+            <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-300">
+              {roomCode}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -114,9 +117,13 @@ export default function RoomHistoryPage() {
         <section className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-5">
           <p className="text-xs uppercase tracking-wide text-emerald-200">Winner</p>
           <div className="mt-2 flex items-center gap-3">
-            <AvatarBadge name={winner.nickname} avatarUrl={winner.avatar_url} size="lg" />
+            <AvatarBadge
+              name={winner.leetcode_username}
+              avatarUrl={winner.avatar_url}
+              size="lg"
+            />
             <h2 className="text-2xl font-semibold text-emerald-100">
-              {winner.nickname} ({winner.solved_count} solved)
+              @{winner.leetcode_username} ({winner.solved_count} solved)
             </h2>
           </div>
           <p className="mt-2 text-xs text-emerald-200/90">
@@ -155,13 +162,14 @@ export default function RoomHistoryPage() {
                   <td>
                     <div className="flex items-center gap-2">
                       <AvatarBadge
-                        name={entry.nickname}
+                        name={entry.leetcode_username}
                         avatarUrl={entry.avatar_url}
                         size="sm"
                       />
                       <div>
-                        <span className="font-medium text-slate-100">{entry.nickname}</span>
-                        <p className="font-mono text-xs text-slate-400">@{entry.leetcode_username}</p>
+                        <span className="font-mono font-medium text-slate-100">
+                          @{entry.leetcode_username}
+                        </span>
                       </div>
                     </div>
                   </td>
@@ -184,7 +192,9 @@ export default function RoomHistoryPage() {
                   className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
                 >
                   <p className="text-slate-100">
-                    <span className="font-semibold text-cyan-200">{event.participant_nickname}</span>{" "}
+                    <span className="font-semibold text-cyan-200">
+                      @{event.participant_leetcode_username}
+                    </span>{" "}
                     <span className="font-mono text-slate-300">{event.problem_slug}</span>
                   </p>
                   <p className="mt-1 text-xs text-slate-400">

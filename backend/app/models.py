@@ -55,6 +55,7 @@ class Room(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     room_code: Mapped[str] = mapped_column(String(12), unique=True, index=True)
+    room_title: Mapped[str] = mapped_column(String(120), default='Untitled Room')
     status: Mapped[RoomStatus] = mapped_column(
         SAEnum(RoomStatus, name='room_status'), default=RoomStatus.LOBBY, index=True
     )
@@ -75,6 +76,7 @@ class Room(Base):
     hard_count: Mapped[int] = mapped_column(Integer, default=0)
     strict_check: Mapped[bool] = mapped_column(Boolean, default=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    scheduled_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     host_participant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -14,6 +14,7 @@ class RoomSettingsInput(BaseModel):
     hard_count: int = Field(default=0, ge=0, le=10)
     strict_check: bool = False
     duration_minutes: int = Field(default=60, ge=15, le=180)
+    start_at: datetime
     passcode: Optional[str] = Field(default=None, min_length=4, max_length=32)
 
     @model_validator(mode='before')
@@ -42,22 +43,32 @@ class RoomSettingsInput(BaseModel):
         self.problem_count = total
         return self
 
+    @field_validator('start_at')
+    @classmethod
+    def normalize_start_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
 
 class CreateRoomRequest(BaseModel):
-    host_nickname: str = Field(min_length=1, max_length=40)
+    room_title: str = Field(min_length=3, max_length=80)
     host_leetcode_username: str = Field(min_length=1, max_length=40)
-    settings: RoomSettingsInput = Field(default_factory=RoomSettingsInput)
+    settings: RoomSettingsInput
+
+    @field_validator('room_title')
+    @classmethod
+    def normalize_room_title(cls, value: str) -> str:
+        return value.strip()
 
 
 class JoinRoomRequest(BaseModel):
-    nickname: str = Field(min_length=1, max_length=40)
     leetcode_username: str = Field(min_length=1, max_length=40)
     passcode: Optional[str] = Field(default=None, min_length=4, max_length=32)
 
 
 class ParticipantPublic(BaseModel):
     id: str
-    nickname: str
     leetcode_username: str
     avatar_url: Optional[str]
     is_host: bool
@@ -76,6 +87,7 @@ class ProblemPublic(BaseModel):
 class RoomPublic(BaseModel):
     id: str
     room_code: str
+    room_title: str
     status: RoomStatus
     problem_source: ProblemSource
     problem_count: int
@@ -84,6 +96,7 @@ class RoomPublic(BaseModel):
     hard_count: int
     strict_check: bool
     duration_minutes: int
+    scheduled_start_at: datetime
     starts_at: Optional[datetime]
     ends_at: Optional[datetime]
     created_at: datetime
@@ -94,7 +107,6 @@ class RoomPublic(BaseModel):
 class LeaderboardEntry(BaseModel):
     rank: int
     participant_id: str
-    nickname: str
     leetcode_username: str
     avatar_url: Optional[str]
     is_host: bool
@@ -104,8 +116,10 @@ class LeaderboardEntry(BaseModel):
 
 class DiscoverRoomResponse(BaseModel):
     room_code: str
+    room_title: str
     status: RoomStatus
     problem_source: ProblemSource
+    scheduled_start_at: datetime
     starts_at: Optional[datetime]
     ends_at: Optional[datetime]
     created_at: datetime
@@ -114,7 +128,6 @@ class DiscoverRoomResponse(BaseModel):
     medium_count: int
     hard_count: int
     participant_count: int
-    host_nickname: Optional[str]
     host_leetcode_username: Optional[str]
     host_avatar_url: Optional[str]
     joinable: bool
@@ -146,6 +159,20 @@ class StartRoomResponse(BaseModel):
     room: RoomPublic
 
 
+class UpdateRoomSettingsRequest(BaseModel):
+    room_title: str = Field(min_length=3, max_length=80)
+    settings: RoomSettingsInput
+
+    @field_validator('room_title')
+    @classmethod
+    def normalize_room_title(cls, value: str) -> str:
+        return value.strip()
+
+
+class UpdateRoomSettingsResponse(BaseModel):
+    room: RoomPublic
+
+
 class ManualSolveRequest(BaseModel):
     problem_slug: str = Field(min_length=1, max_length=255)
     solved: bool
@@ -162,7 +189,7 @@ class ManualSolveResponse(BaseModel):
 
 class HistoryEvent(BaseModel):
     participant_id: str
-    participant_nickname: str
+    participant_leetcode_username: str
     problem_slug: str
     event_type: SolveEventType
     source: SolveSource

@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import { ApiError, getRoomState, startRoom } from "@/lib/api";
+import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
 import { getRoomToken } from "@/lib/tokens";
 import type { ProblemSource, RoomStateResponse } from "@/lib/types";
-import { prettyDateTime } from "@/lib/format";
+import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { SectionCard } from "@/components/section-card";
 import { AvatarBadge } from "@/components/avatar-badge";
 
@@ -30,6 +30,26 @@ function formatProblemSource(source: ProblemSource) {
   return labels[source];
 }
 
+function toLocalDateTimeValue(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function openNativePicker(input: HTMLInputElement) {
+  const pickerCapable = input as HTMLInputElement & { showPicker?: () => void };
+  if (!pickerCapable.showPicker) return;
+  try {
+    pickerCapable.showPicker();
+  } catch {
+    // Some browsers throw when showPicker is called without a valid user gesture.
+    // Ignore and allow native default behavior.
+  }
+}
+
 export default function LobbyPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
@@ -38,12 +58,30 @@ export default function LobbyPage() {
   const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [starting, setStarting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [formLoadedForRoom, setFormLoadedForRoom] = useState<string | null>(null);
+
+  const [roomTitle, setRoomTitle] = useState("");
+  const [problemSource, setProblemSource] = useState<ProblemSource>("random");
+  const [easyCount, setEasyCount] = useState(0);
+  const [mediumCount, setMediumCount] = useState(4);
+  const [hardCount, setHardCount] = useState(0);
+  const [strictCheck, setStrictCheck] = useState(false);
+  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [startAtLocal, setStartAtLocal] = useState("");
+  const [passcode, setPasscode] = useState("");
 
   useEffect(() => {
     setToken(getRoomToken(roomCode));
   }, [roomCode]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchState = useCallback(async () => {
     if (!roomCode || !token) return;
@@ -51,6 +89,7 @@ export default function LobbyPage() {
     try {
       const response = await getRoomState(roomCode, token);
       setState(response);
+      setServerOffsetMs(new Date(response.server_time).getTime() - Date.now());
       setError(null);
 
       if (response.room.status === "active") {
@@ -81,23 +120,77 @@ export default function LobbyPage() {
     return () => clearInterval(timer);
   }, [fetchState, token]);
 
+  useEffect(() => {
+    if (!state?.room) return;
+    if (formLoadedForRoom === state.room.id) return;
+
+    setRoomTitle(state.room.room_title);
+    setProblemSource(state.room.problem_source);
+    setEasyCount(state.room.easy_count);
+    setMediumCount(state.room.medium_count);
+    setHardCount(state.room.hard_count);
+    setStrictCheck(state.room.strict_check);
+    setDurationMinutes(state.room.duration_minutes);
+    setStartAtLocal(toLocalDateTimeValue(new Date(state.room.scheduled_start_at)));
+    setPasscode("");
+    setFormLoadedForRoom(state.room.id);
+  }, [formLoadedForRoom, state]);
+
   const me = useMemo(
     () => state?.participants.find((participant) => participant.id === state.my_participant_id),
     [state],
   );
   const isHost = Boolean(me?.is_host);
 
-  async function handleStart() {
-    if (!token) return;
+  const totalProblems = useMemo(
+    () => easyCount + mediumCount + hardCount,
+    [easyCount, mediumCount, hardCount],
+  );
+  const validTotal = totalProblems >= 3 && totalProblems <= 10;
 
+  const scheduledCountdown = useMemo(() => {
+    if (!state?.room.scheduled_start_at) return "00:00:00";
+    const virtualServerNow = new Date(nowMs + serverOffsetMs).toISOString();
+    return formatCountdown(state.room.scheduled_start_at, virtualServerNow);
+  }, [nowMs, serverOffsetMs, state?.room.scheduled_start_at]);
+
+  async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || !state) return;
+
+    if (!validTotal) {
+      setError("Total problems must be between 3 and 10.");
+      return;
+    }
+
+    const parsedStartAt = new Date(startAtLocal);
+    if (Number.isNaN(parsedStartAt.getTime())) {
+      setError("Please provide a valid start time.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
     try {
-      setStarting(true);
-      await startRoom(roomCode, token);
+      await updateRoomSettings(roomCode, token, {
+        room_title: roomTitle.trim(),
+        settings: {
+          problem_source: problemSource,
+          easy_count: easyCount,
+          medium_count: mediumCount,
+          hard_count: hardCount,
+          strict_check: strictCheck,
+          duration_minutes: durationMinutes,
+          start_at: parsedStartAt.toISOString(),
+          ...(passcode.trim() ? { passcode: passcode.trim() } : {}),
+        },
+      });
+      setFormLoadedForRoom(null);
       await fetchState();
     } catch (err) {
       setError(parseApiError(err));
     } finally {
-      setStarting(false);
+      setSaving(false);
     }
   }
 
@@ -132,8 +225,15 @@ export default function LobbyPage() {
           <div>
             <p className="text-sm uppercase tracking-wide text-cyan-200">Room Lobby</p>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-50">
-              Room {roomCode}
+              {state?.room.room_title}
             </h1>
+            <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-300">
+              {roomCode}
+            </p>
+          </div>
+          <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-center">
+            <p className="text-xs uppercase tracking-wide text-cyan-200">Auto Starts In</p>
+            <p className="font-mono text-2xl font-semibold text-cyan-100">{scheduledCountdown}</p>
           </div>
           <Link
             href="/"
@@ -151,7 +251,7 @@ export default function LobbyPage() {
       ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <SectionCard title="Participants" subtitle="Everyone joins with nickname + LeetCode username.">
+        <SectionCard title="Participants" subtitle="Everyone joins with LeetCode username.">
           <table className="table-grid">
             <thead>
               <tr>
@@ -167,20 +267,19 @@ export default function LobbyPage() {
                   <td>
                     <div className="flex items-center gap-2">
                       <AvatarBadge
-                        name={participant.nickname}
+                        name={participant.leetcode_username}
                         avatarUrl={participant.avatar_url}
                         size="sm"
                       />
                       <div>
-                        <span className="font-medium text-slate-100">{participant.nickname}</span>
+                        <span className="font-mono font-medium text-slate-100">
+                          @{participant.leetcode_username}
+                        </span>
                         {participant.id === state.my_participant_id ? (
                           <span className="ml-2 rounded bg-cyan-500/20 px-2 py-0.5 text-xs text-cyan-200">
                             You
                           </span>
                         ) : null}
-                        <p className="font-mono text-xs text-slate-400">
-                          @{participant.leetcode_username}
-                        </p>
                       </div>
                     </div>
                   </td>
@@ -191,70 +290,156 @@ export default function LobbyPage() {
           </table>
         </SectionCard>
 
-        <SectionCard title="Room Settings" subtitle="These are locked once host starts the challenge.">
-          <div className="space-y-3 text-sm text-slate-200">
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Problems</span>
-              <span className="font-semibold text-cyan-200">
-                {state?.room.problem_count ?? "-"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Difficulty Mix</span>
-              <span className="font-semibold text-cyan-200">
-                E{state?.room.easy_count ?? 0} / M{state?.room.medium_count ?? 0} / H
-                {state?.room.hard_count ?? 0}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Timer</span>
-              <span className="font-semibold text-cyan-200">
-                {state?.room.duration_minutes ?? "-"} minutes
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Passcode</span>
-              <span className="font-semibold text-cyan-200">
-                {state?.room.has_passcode ? "Protected" : "Open"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Source</span>
-              <span className="font-semibold text-cyan-200">
+        <SectionCard
+          title="Room Settings"
+          subtitle="Host can edit settings until scheduled start time."
+        >
+          {isHost ? (
+            <form className="space-y-3 text-sm text-slate-200" onSubmit={handleSaveSettings}>
+              <label className="block">
+                Room Title
+                <input
+                  required
+                  minLength={3}
+                  maxLength={80}
+                  value={roomTitle}
+                  onChange={(e) => setRoomTitle(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                />
+              </label>
+              <label className="block">
+                Scheduled Start
+                <input
+                  type="datetime-local"
+                  required
+                  value={startAtLocal}
+                  onChange={(e) => setStartAtLocal(e.target.value)}
+                  onClick={(e) => openNativePicker(e.currentTarget)}
+                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                />
+              </label>
+              <label className="block">
+                Problem Source
+                <select
+                  value={problemSource}
+                  onChange={(e) => setProblemSource(e.target.value as ProblemSource)}
+                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                >
+                  <option value="random">Random (all LeetCode)</option>
+                  <option value="neetcode_150">NeetCode 150</option>
+                  <option value="neetcode_250">NeetCode 250</option>
+                  <option value="blind_75">Blind 75</option>
+                  <option value="striver_a2z_sheet">Striver A2Z Sheet</option>
+                  <option value="striver_sde_sheet">Striver SDE Sheet</option>
+                </select>
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <label className="block">
+                  Easy
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={easyCount}
+                    onChange={(e) => setEasyCount(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  />
+                </label>
+                <label className="block">
+                  Medium
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={mediumCount}
+                    onChange={(e) => setMediumCount(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  />
+                </label>
+                <label className="block">
+                  Hard
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={hardCount}
+                    onChange={(e) => setHardCount(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  />
+                </label>
+              </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">
+                Total problems: {totalProblems} (allowed 3 to 10)
+              </div>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                <span>Strict checking</span>
+                <input
+                  type="checkbox"
+                  checked={strictCheck}
+                  onChange={(e) => setStrictCheck(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
+                />
+              </label>
+              <label className="block">
+                Duration (minutes)
+                <input
+                  type="number"
+                  min={15}
+                  max={180}
+                  value={durationMinutes}
+                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                />
+              </label>
+              <label className="block">
+                New Passcode (optional)
+                <input
+                  value={passcode}
+                  onChange={(e) => setPasscode(e.target.value)}
+                  minLength={4}
+                  maxLength={32}
+                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  placeholder={
+                    state?.room.has_passcode
+                      ? "Leave blank to keep existing passcode"
+                      : "Set room passcode"
+                  }
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={saving || !validTotal}
+                className="w-full rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save Settings"}
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-3 text-sm text-slate-200">
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Start: {prettyDateTime(state?.room.scheduled_start_at ?? null)}
+              </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Source:{" "}
                 {state?.room.problem_source
                   ? formatProblemSource(state.room.problem_source)
                   : "-"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Strict Checking</span>
-              <span className="font-semibold text-cyan-200">
-                {state?.room.strict_check ? "On" : "Off"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
-              <span>Created</span>
-              <span className="font-semibold text-cyan-200">
-                {prettyDateTime(state?.room.created_at ?? null)}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-5">
-            {isHost ? (
-              <button
-                onClick={handleStart}
-                disabled={starting}
-                className="w-full rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {starting ? "Starting..." : "Start Challenge"}
-              </button>
-            ) : (
-              <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
-                Waiting for host to start the challenge.
               </div>
-            )}
-          </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Mix: E{state?.room.easy_count ?? 0} / M{state?.room.medium_count ?? 0} / H
+                {state?.room.hard_count ?? 0}
+              </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Timer: {state?.room.duration_minutes ?? "-"} minutes
+              </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Strict checking: {state?.room.strict_check ? "On" : "Off"}
+              </div>
+              <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
+                Waiting for host to finalize settings. Room starts automatically at schedule.
+              </div>
+            </div>
+          )}
         </SectionCard>
       </section>
     </main>

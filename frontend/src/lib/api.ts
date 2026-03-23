@@ -6,6 +6,8 @@ import type {
   JoinRoomRequest,
   JoinRoomResponse,
   RoomStateResponse,
+  UpdateRoomSettingsRequest,
+  UpdateRoomSettingsResponse,
 } from "@/lib/types";
 
 const API_BASE =
@@ -81,6 +83,18 @@ export function startRoom(roomCode: string, token: string) {
       token,
     },
   );
+}
+
+export function updateRoomSettings(
+  roomCode: string,
+  token: string,
+  payload: UpdateRoomSettingsRequest,
+) {
+  return request<UpdateRoomSettingsResponse>(`/api/v1/rooms/${roomCode}/settings`, {
+    method: "PATCH",
+    token,
+    body: payload,
+  });
 }
 
 export function getRoomState(roomCode: string, token?: string | null) {

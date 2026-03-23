@@ -147,8 +147,11 @@ export default function ActiveRoomPage() {
           <div>
             <p className="text-sm uppercase tracking-wide text-cyan-200">Challenge Live</p>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-50">
-              Room {roomCode}
+              {state?.room.room_title}
             </h1>
+            <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-300">
+              {roomCode}
+            </p>
           </div>
 
           <div className="rounded-xl border border-emerald-300/30 bg-emerald-500/10 px-4 py-2 text-center">
@@ -257,13 +260,15 @@ export default function ActiveRoomPage() {
                   <td>
                     <div className="flex items-center gap-2">
                       <AvatarBadge
-                        name={entry.nickname}
+                        name={entry.leetcode_username}
                         avatarUrl={entry.avatar_url}
                         size="sm"
                       />
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-slate-100">{entry.nickname}</span>
+                          <span className="font-mono font-medium text-slate-100">
+                            @{entry.leetcode_username}
+                          </span>
                           {entry.is_host ? (
                             <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs text-cyan-200">
                               Host
@@ -275,7 +280,6 @@ export default function ActiveRoomPage() {
                             </span>
                           ) : null}
                         </div>
-                        <p className="font-mono text-xs text-slate-400">@{entry.leetcode_username}</p>
                       </div>
                     </div>
                   </td>

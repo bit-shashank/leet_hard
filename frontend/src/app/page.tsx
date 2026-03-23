@@ -33,10 +33,7 @@ function roomTimingText(room: DiscoverRoomResponse) {
   if (room.status === "active") {
     return `Ends ${prettyDateTime(room.ends_at)}`;
   }
-  if (room.starts_at) {
-    return `Starts ${prettyDateTime(room.starts_at)}`;
-  }
-  return `Created ${prettyDateTime(room.created_at)}`;
+  return `Starts ${prettyDateTime(room.scheduled_start_at)}`;
 }
 
 function formatProblemSource(source: ProblemSource) {
@@ -51,6 +48,32 @@ function formatProblemSource(source: ProblemSource) {
   return labels[source];
 }
 
+function toLocalDateTimeValue(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function defaultStartAtLocal() {
+  const value = new Date(Date.now() + 5 * 60 * 1000);
+  value.setSeconds(0, 0);
+  return toLocalDateTimeValue(value);
+}
+
+function openNativePicker(input: HTMLInputElement) {
+  const pickerCapable = input as HTMLInputElement & { showPicker?: () => void };
+  if (!pickerCapable.showPicker) return;
+  try {
+    pickerCapable.showPicker();
+  } catch {
+    // Some browsers throw when showPicker is called without a valid user gesture.
+    // Ignore and allow native default behavior.
+  }
+}
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -59,7 +82,7 @@ export default function HomePage() {
   const [discoverLoading, setDiscoverLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [hostNickname, setHostNickname] = useState("");
+  const [roomTitle, setRoomTitle] = useState("");
   const [hostLeet, setHostLeet] = useState("");
   const [problemSource, setProblemSource] = useState<ProblemSource>("random");
   const [easyCount, setEasyCount] = useState(0);
@@ -67,10 +90,10 @@ export default function HomePage() {
   const [hardCount, setHardCount] = useState(0);
   const [strictCheck, setStrictCheck] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(60);
+  const [startAtLocal, setStartAtLocal] = useState(defaultStartAtLocal);
   const [createPasscode, setCreatePasscode] = useState("");
 
   const [roomCode, setRoomCode] = useState("");
-  const [joinNickname, setJoinNickname] = useState("");
   const [joinLeet, setJoinLeet] = useState("");
   const [joinPasscode, setJoinPasscode] = useState("");
 
@@ -95,6 +118,10 @@ export default function HomePage() {
         room: discoverByCode.get(savedRoomCode) ?? null,
       })),
     [savedRoomCodes, discoverByCode],
+  );
+  const joinedRoomCodeSet = useMemo(
+    () => new Set(savedRoomCodes.map((code) => code.toUpperCase())),
+    [savedRoomCodes],
   );
 
   const fetchDiscoverRooms = useCallback(async () => {
@@ -142,8 +169,15 @@ export default function HomePage() {
     setError(null);
 
     try {
+      const parsedStartAt = new Date(startAtLocal);
+      if (Number.isNaN(parsedStartAt.getTime())) {
+        setError("Please provide a valid start time.");
+        setCreateLoading(false);
+        return;
+      }
+
       const response = await createRoom({
-        host_nickname: hostNickname.trim(),
+        room_title: roomTitle.trim(),
         host_leetcode_username: hostLeet.trim(),
         settings: {
           problem_source: problemSource,
@@ -152,6 +186,7 @@ export default function HomePage() {
           hard_count: hardCount,
           strict_check: strictCheck,
           duration_minutes: durationMinutes,
+          start_at: parsedStartAt.toISOString(),
           ...(createPasscode.trim() ? { passcode: createPasscode.trim() } : {}),
         },
       });
@@ -174,7 +209,6 @@ export default function HomePage() {
     try {
       const normalizedCode = roomCode.trim().toUpperCase();
       const response = await joinRoom(normalizedCode, {
-        nickname: joinNickname.trim(),
         leetcode_username: joinLeet.trim(),
         ...(joinPasscode.trim() ? { passcode: joinPasscode.trim() } : {}),
       });
@@ -243,10 +277,12 @@ export default function HomePage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">Room</p>
-                    <h3 className="font-mono text-lg font-semibold tracking-wider text-slate-100">
-                      {savedRoomCode}
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-100">
+                      {room?.room_title || "Saved Room"}
                     </h3>
+                    <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
+                      {savedRoomCode}
+                    </p>
                   </div>
                   <span
                     className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room?.status ?? "saved")}`}
@@ -331,10 +367,12 @@ export default function HomePage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">Room</p>
-                    <h3 className="font-mono text-lg font-semibold tracking-wider text-slate-100">
-                      {room.room_code}
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-100">
+                      {room.room_title}
                     </h3>
+                    <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
+                      {room.room_code}
+                    </p>
                   </div>
                   <span
                     className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
@@ -347,15 +385,12 @@ export default function HomePage() {
 
                 <div className="mt-3 flex items-center gap-2 text-sm text-slate-200">
                   <AvatarBadge
-                    name={room.host_nickname || "Host"}
+                    name={room.host_leetcode_username || "Host"}
                     avatarUrl={room.host_avatar_url}
                     size="sm"
                   />
                   <div>
                     <p className="font-medium text-slate-100">
-                      {room.host_nickname || "Unknown Host"}
-                    </p>
-                    <p className="font-mono text-xs text-slate-400">
                       @{room.host_leetcode_username || "unknown"}
                     </p>
                   </div>
@@ -374,16 +409,22 @@ export default function HomePage() {
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-3">
-                  <span className="text-xs text-slate-400">
-                    {room.has_passcode ? "Passcode required" : "Open room"}
-                  </span>
+                  {joinedRoomCodeSet.has(room.room_code.toUpperCase()) ? (
+                    <span className="text-xs text-emerald-300">
+                      Already joined in this browser
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400">
+                      {room.has_passcode ? "Passcode required" : "Open room"}
+                    </span>
+                  )}
                   <button
                     type="button"
-                    disabled={!room.joinable}
+                    disabled={!room.joinable || joinedRoomCodeSet.has(room.room_code.toUpperCase())}
                     onClick={() => prefillJoinRoom(room.room_code)}
                     className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Join
+                    {joinedRoomCodeSet.has(room.room_code.toUpperCase()) ? "Joined" : "Join"}
                   </button>
                 </div>
               </article>
@@ -403,12 +444,13 @@ export default function HomePage() {
 
           <form className="mt-5 space-y-4" onSubmit={handleCreateRoom}>
             <label className="block text-sm text-slate-200">
-              Host Nickname
+              Room Title
               <input
                 required
-                value={hostNickname}
-                onChange={(e) => setHostNickname(e.target.value)}
+                value={roomTitle}
+                onChange={(e) => setRoomTitle(e.target.value)}
                 className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                placeholder="Sunday Mock Race"
               />
             </label>
 
@@ -448,7 +490,7 @@ export default function HomePage() {
                   required
                   value={easyCount}
                   onChange={(e) => setEasyCount(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
               <label className="block text-sm text-slate-200">
@@ -460,7 +502,7 @@ export default function HomePage() {
                   required
                   value={mediumCount}
                   onChange={(e) => setMediumCount(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
               <label className="block text-sm text-slate-200">
@@ -472,7 +514,7 @@ export default function HomePage() {
                   required
                   value={hardCount}
                   onChange={(e) => setHardCount(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
             </div>
@@ -510,7 +552,19 @@ export default function HomePage() {
                 required
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+              />
+            </label>
+
+            <label className="block text-sm text-slate-200">
+              Scheduled Start Time
+              <input
+                type="datetime-local"
+                required
+                value={startAtLocal}
+                onChange={(e) => setStartAtLocal(e.target.value)}
+                onClick={(e) => openNativePicker(e.currentTarget)}
+                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
               />
             </label>
 
@@ -555,16 +609,6 @@ export default function HomePage() {
                 onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                 className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 uppercase tracking-wider text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 placeholder="ABC123"
-              />
-            </label>
-
-            <label className="block text-sm text-slate-200">
-              Nickname
-              <input
-                required
-                value={joinNickname}
-                onChange={(e) => setJoinNickname(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
               />
             </label>
 

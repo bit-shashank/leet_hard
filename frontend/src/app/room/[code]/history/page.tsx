@@ -32,17 +32,18 @@ export default function RoomHistoryPage() {
       setLoading(false);
       return;
     }
+    const token = accessToken;
 
     async function loadHistory() {
       try {
-        const response = await getRoomHistory(roomCode, accessToken);
+        const response = await getRoomHistory(roomCode, token);
         setHistory(response);
         setError(null);
       } catch (err) {
         const maybeApi = err as ApiError;
         if (maybeApi?.status === 400) {
           try {
-            const roomState = await getRoomState(roomCode, accessToken);
+            const roomState = await getRoomState(roomCode, token);
             if (roomState.room.status === "active") {
               router.replace(`/room/${roomCode}`);
               return;

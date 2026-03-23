@@ -143,6 +143,10 @@ export type MeResponse = {
   display_name: string | null;
   avatar_url: string | null;
   primary_leetcode_username: string | null;
+  leetcode_verified: boolean;
+  leetcode_locked: boolean;
+  onboarding_required: boolean;
+  onboarding_completed_at: string | null;
   profile_complete: boolean;
 };
 
@@ -169,4 +173,23 @@ export type DashboardResponse = {
   total_solves: number;
   avg_rank: number | null;
   recent_rooms: DashboardRoomItem[];
+};
+
+export type OnboardingStartRequest = {
+  leetcode_username: string;
+};
+
+export type OnboardingStartResponse = {
+  problem_slug: string;
+  problem_title: string;
+  instructions: string;
+  reference_code: string;
+  issued_at: string;
+  expires_at: string;
+};
+
+export type OnboardingVerifyResponse = {
+  verified: boolean;
+  verified_at: string;
+  me: MeResponse;
 };

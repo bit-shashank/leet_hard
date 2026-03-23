@@ -230,16 +230,7 @@ def get_recent_submissions(username: str, limit: int = 100) -> List[Dict[str, An
 
 
 def get_user_avatar_url(username: str) -> str | None:
-    with _client() as client:
-        response = client.get(f'/user/{username}')
-        if response.status_code >= 400:
-            raise LeetCodeServiceError(
-                f'User profile request failed for {username}: {response.status_code}'
-            )
-        payload = response.json()
-
-    if not isinstance(payload, dict):
-        raise LeetCodeServiceError('Unexpected user profile payload shape from LeetCode API')
+    payload = get_user_profile(username)
 
     profile = payload.get('profile')
     if isinstance(profile, dict):
@@ -252,3 +243,18 @@ def get_user_avatar_url(username: str) -> str | None:
         return avatar.strip()
 
     return None
+
+
+def get_user_profile(username: str) -> Dict[str, Any]:
+    with _client() as client:
+        response = client.get(f'/user/{username}')
+        if response.status_code >= 400:
+            raise LeetCodeServiceError(
+                f'User profile request failed for {username}: {response.status_code}'
+            )
+        payload = response.json()
+
+    if not isinstance(payload, dict):
+        raise LeetCodeServiceError('Unexpected user profile payload shape from LeetCode API')
+
+    return payload

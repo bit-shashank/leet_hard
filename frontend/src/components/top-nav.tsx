@@ -56,7 +56,7 @@ export function TopNav() {
             href="/"
             className="rounded-lg px-2 py-1 text-sm font-semibold tracking-wide text-cyan-100 transition hover:bg-cyan-500/10"
           >
-            LeetCode Room Race
+            LeetRace
           </Link>
           <Link
             href="/dashboard"
@@ -68,6 +68,18 @@ export function TopNav() {
           >
             Dashboard
           </Link>
+          {user && me?.onboarding_required ? (
+            <Link
+              href="/getting-started"
+              className={`rounded-lg px-2 py-1 text-sm transition ${
+                pathname === "/getting-started"
+                  ? "bg-amber-500/20 text-amber-100"
+                  : "text-amber-200 hover:bg-amber-500/10"
+              }`}
+            >
+              Getting Started
+            </Link>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-3">

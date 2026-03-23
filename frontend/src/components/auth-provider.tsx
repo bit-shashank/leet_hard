@@ -33,6 +33,29 @@ type AuthProviderProps = {
   children: ReactNode;
 };
 
+function isInvalidRefreshTokenMessage(message: string | undefined) {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid refresh token") ||
+    normalized.includes("refresh token not found")
+  );
+}
+
+function resolveOAuthRedirectUrl() {
+  if (typeof window === "undefined") return undefined;
+  const { hostname, origin } = window.location;
+  const isLocalLikeHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname.endsWith(".localhost");
+  if (isLocalLikeHost) {
+    return "http://localhost:3000/getting-started";
+  }
+  return `${origin}/getting-started`;
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -66,17 +89,39 @@ export function AuthProvider({ children }: AuthProviderProps) {
     let mounted = true;
 
     async function bootstrapAuth() {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      setSession(data.session ?? null);
-      setAuthLoading(false);
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        if (error) {
+          if (isInvalidRefreshTokenMessage(error.message)) {
+            await supabase.auth.signOut({ scope: "local" });
+          }
+          setSession(null);
+          setAuthLoading(false);
+          setProfileLoading(false);
+          return;
+        }
+
+        setSession(data.session ?? null);
+      } catch {
+        if (!mounted) return;
+        setSession(null);
+      } finally {
+        if (!mounted) return;
+        setAuthLoading(false);
+      }
     }
 
     void bootstrapAuth();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "SIGNED_OUT") {
+        setMe(null);
+        setProfileLoading(false);
+      }
       setSession(nextSession ?? null);
       setAuthLoading(false);
     });
@@ -92,8 +137,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [refreshMe]);
 
   const signInWithGoogle = useCallback(async () => {
-    const redirectTo =
-      typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
+    const redirectTo = resolveOAuthRedirectUrl();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },

@@ -7,6 +7,9 @@ import type {
   JoinRoomRequest,
   JoinRoomResponse,
   MeResponse,
+  OnboardingStartRequest,
+  OnboardingStartResponse,
+  OnboardingVerifyResponse,
   RoomStateResponse,
   UpdateMeRequest,
   UpdateRoomSettingsRequest,
@@ -67,10 +70,16 @@ export function createRoom(payload: CreateRoomRequest, accessToken: string) {
   });
 }
 
-export function getDiscoverRooms(accessToken: string, statuses = "lobby,active") {
-  const query = new URLSearchParams({ statuses });
+export function getDiscoverRooms(
+  statuses = "lobby,active",
+  opts?: { accessToken?: string | null; limit?: number },
+) {
+  const query = new URLSearchParams({
+    statuses,
+    limit: String(opts?.limit ?? 12),
+  });
   return request<DiscoverRoomResponse[]>(`/api/v1/rooms/discover?${query.toString()}`, {
-    accessToken,
+    accessToken: opts?.accessToken,
   });
 }
 
@@ -144,6 +153,24 @@ export function updateMe(payload: UpdateMeRequest, accessToken: string) {
 
 export function getDashboard(accessToken: string) {
   return request<DashboardResponse>("/api/v1/me/dashboard", {
+    accessToken,
+  });
+}
+
+export function startOnboarding(
+  payload: OnboardingStartRequest,
+  accessToken: string,
+) {
+  return request<OnboardingStartResponse>("/api/v1/me/onboarding/start", {
+    method: "POST",
+    body: payload,
+    accessToken,
+  });
+}
+
+export function verifyOnboarding(accessToken: string) {
+  return request<OnboardingVerifyResponse>("/api/v1/me/onboarding/verify", {
+    method: "POST",
     accessToken,
   });
 }

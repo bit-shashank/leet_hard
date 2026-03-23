@@ -17,11 +17,12 @@ Follow the order exactly:
 2. From Supabase, copy the Postgres connection string.
 3. In Supabase Auth:
 - Enable **Google** provider.
+- Set **Site URL** to `https://leet-hard.vercel.app`.
 - Add redirect URLs:
   - `http://localhost:3000`
-  - `https://<YOUR-VERCEL-DOMAIN>.vercel.app`
-  - (optional custom domain if used)
-3. Use a SQLAlchemy-compatible URL in backend env:
+  - `https://leet-hard.vercel.app`
+  - preview URLs if you use Vercel previews
+4. Use a SQLAlchemy-compatible URL in backend env:
 
 ```env
 DATABASE_URL=postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require
@@ -48,13 +49,13 @@ Using `alembic upgrade head` on each deploy is important so schema is always in 
 Set these in Render service env:
 
 ```env
-APP_NAME=LeetCode Room Race API
+APP_NAME=LeetRace API
 APP_ENV=prod
 DATABASE_URL=postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require
 LEETCODE_API_BASE_URL=https://leetcode-api-pied.vercel.app
 APP_TOKEN_SECRET=<long-random-secret>
-CORS_ORIGINS=https://<YOUR-VERCEL-DOMAIN>.vercel.app,http://localhost:3000
-FRONTEND_BASE_URL=https://<YOUR-VERCEL-DOMAIN>.vercel.app
+CORS_ORIGINS=https://leet-hard.vercel.app,http://localhost:3000
+FRONTEND_BASE_URL=https://leet-hard.vercel.app
 SUPABASE_URL=https://<PROJECT_REF>.supabase.co
 SUPABASE_JWKS_URL=https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_AUDIENCE=authenticated
@@ -105,7 +106,10 @@ Run these checks in order:
 
 4. End-to-end:
 - Sign in with Google.
-- Ensure primary LeetCode username is set in dashboard/profile gate.
+- Complete Getting Started onboarding:
+  - enter LeetCode username
+  - submit accepted solution for Fizz Buzz
+  - click Verify
 - Create room from frontend.
 - Join from second browser/incognito.
 - Wait for scheduled auto-start (or set near-future time in test).

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
@@ -22,6 +23,7 @@ function roomHref(roomCode: string, status: "lobby" | "active" | "ended") {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { accessToken, authLoading, me, refreshMe, user } = useAuth();
 
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -36,6 +38,14 @@ export default function DashboardPage() {
     setDisplayName(me?.display_name || "");
     setPrimaryLeet(me?.primary_leetcode_username || "");
   }, [me?.display_name, me?.primary_leetcode_username]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user || !me) return;
+    if (me.onboarding_required) {
+      router.replace("/getting-started");
+    }
+  }, [authLoading, me, router, user]);
 
   const loadDashboard = useCallback(async () => {
     if (!accessToken) {
@@ -153,8 +163,14 @@ export default function DashboardPage() {
                 required
                 value={primaryLeet}
                 onChange={(e) => setPrimaryLeet(e.target.value)}
+                disabled={Boolean(me?.leetcode_locked)}
                 className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
               />
+              {me?.leetcode_locked ? (
+                <p className="mt-1 text-xs text-slate-400">
+                  Verified LeetCode ID is locked and cannot be changed from the app.
+                </p>
+              ) : null}
             </label>
             <button
               type="submit"

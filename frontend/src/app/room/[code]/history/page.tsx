@@ -21,11 +21,19 @@ export default function RoomHistoryPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
   const roomCode = (params.code || "").toUpperCase();
-  const { accessToken, authLoading, user } = useAuth();
+  const { accessToken, authLoading, me, profileLoading, user } = useAuth();
 
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (authLoading || profileLoading) return;
+    if (!user || !me) return;
+    if (me.onboarding_required) {
+      router.replace("/getting-started");
+    }
+  }, [authLoading, me, profileLoading, router, user]);
 
   useEffect(() => {
     if (!accessToken) {

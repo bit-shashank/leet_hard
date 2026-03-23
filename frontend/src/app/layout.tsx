@@ -17,9 +17,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LeetCode Room Race",
+  title: "LeetRace",
   description:
-    "Create coding race rooms, solve medium LeetCode problems, and track live leaderboard standings.",
+    "LeetRace lets you run scheduled coding races with friends, live leaderboards, and verified LeetCode identities.",
 };
 
 export default function RootLayout({

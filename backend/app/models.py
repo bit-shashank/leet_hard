@@ -50,6 +50,12 @@ class SolveEventType(str, Enum):
     AUTO_DETECTED = 'auto_detected'
 
 
+class VerificationChallengeStatus(str, Enum):
+    ISSUED = 'issued'
+    VERIFIED = 'verified'
+    EXPIRED = 'expired'
+
+
 class Room(Base):
     __tablename__ = 'rooms'
 
@@ -103,10 +109,17 @@ class User(Base):
     display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     primary_leetcode_username: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    leetcode_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    leetcode_username_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    onboarding_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     participants: Mapped[List['Participant']] = relationship(back_populates='user')
+    verification_challenges: Mapped[List['LeetCodeVerificationChallenge']] = relationship(
+        back_populates='user',
+        cascade='all, delete-orphan',
+    )
 
 
 class Participant(Base):
@@ -198,3 +211,32 @@ class SolveEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     room: Mapped['Room'] = relationship(back_populates='solve_events')
+
+
+class LeetCodeVerificationChallenge(Base):
+    __tablename__ = 'leetcode_verification_challenges'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='CASCADE'), index=True
+    )
+    leetcode_username: Mapped[str] = mapped_column(String(50), index=True)
+    problem_slug: Mapped[str] = mapped_column(String(255), default='fizz-buzz')
+    problem_title: Mapped[str] = mapped_column(String(255), default='Fizz Buzz')
+    reference_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[VerificationChallengeStatus] = mapped_column(
+        SAEnum(
+            VerificationChallengeStatus,
+            name='verification_challenge_status',
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        ),
+        default=VerificationChallengeStatus.ISSUED,
+        index=True,
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped['User'] = relationship(back_populates='verification_challenges')

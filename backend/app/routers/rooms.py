@@ -164,6 +164,16 @@ def _require_primary_leetcode_username(current_user: User) -> str:
     return username
 
 
+def _require_verified_leetcode_username(current_user: User) -> str:
+    username = _require_primary_leetcode_username(current_user)
+    if not current_user.leetcode_verified_at or not current_user.leetcode_username_locked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Complete Getting Started verification before creating or joining rooms',
+        )
+    return username
+
+
 def _maybe_refresh_participant_avatar(db: Session, participant: Participant, force: bool = False) -> bool:
     settings = get_settings()
     now = _utcnow()
@@ -574,7 +584,7 @@ def _parse_status_filters(statuses: str) -> list[RoomStatus]:
 @router.get('/discover', response_model=list[DiscoverRoomResponse])
 def discover_rooms(
     statuses: str = Query(default='lobby,active'),
-    _: User = Depends(get_current_user),
+    limit: int = Query(default=12, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
     requested_statuses = _parse_status_filters(statuses)
@@ -657,7 +667,27 @@ def discover_rooms(
             )
         )
 
-    return discovered
+    def discover_sort_key(room_card: DiscoverRoomResponse):
+        if room_card.status == RoomStatus.ACTIVE:
+            target = _coerce_utc(room_card.starts_at) or _coerce_utc(room_card.scheduled_start_at)
+            status_priority = 0
+        elif room_card.status == RoomStatus.LOBBY:
+            target = _coerce_utc(room_card.scheduled_start_at)
+            status_priority = 1
+        else:
+            target = _coerce_utc(room_card.scheduled_start_at) or _coerce_utc(room_card.created_at)
+            status_priority = 2
+
+        if target is None:
+            distance = float('inf')
+        else:
+            distance = abs((target - now).total_seconds())
+
+        created_at = _coerce_utc(room_card.created_at) or datetime.max.replace(tzinfo=timezone.utc)
+        return (distance, status_priority, created_at)
+
+    discovered.sort(key=discover_sort_key)
+    return discovered[:limit]
 
 
 @router.get('', response_model=list[RoomPublic])
@@ -688,7 +718,7 @@ def create_room(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    username = _require_primary_leetcode_username(current_user)
+    username = _require_verified_leetcode_username(current_user)
     room_title = payload.room_title.strip()
     scheduled_start_at = _coerce_utc(payload.settings.start_at)
 
@@ -770,7 +800,7 @@ def join_room(
     db: Session = Depends(get_db),
 ):
     room = _get_room_or_404(db, room_code)
-    username = _require_primary_leetcode_username(current_user)
+    username = _require_verified_leetcode_username(current_user)
 
     room_dirty = False
     if _maybe_auto_start_room(db, room):

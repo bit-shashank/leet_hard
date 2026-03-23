@@ -32,7 +32,7 @@ export default function LobbyPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
   const roomCode = (params.code || "").toUpperCase();
-  const { accessToken, authLoading, me, user } = useAuth();
+  const { accessToken, authLoading, me, profileLoading, user } = useAuth();
 
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,6 +56,14 @@ export default function LobbyPage() {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (authLoading || profileLoading) return;
+    if (!user || !me) return;
+    if (me.onboarding_required) {
+      router.replace("/getting-started");
+    }
+  }, [authLoading, me, profileLoading, router, user]);
 
   const fetchState = useCallback(async () => {
     if (!roomCode || !accessToken) return;

@@ -205,6 +205,10 @@ class MeResponse(BaseModel):
     display_name: Optional[str]
     avatar_url: Optional[str]
     primary_leetcode_username: Optional[str]
+    leetcode_verified: bool
+    leetcode_locked: bool
+    onboarding_required: bool
+    onboarding_completed_at: Optional[datetime]
     profile_complete: bool
 
 
@@ -247,3 +251,27 @@ class DashboardResponse(BaseModel):
     total_solves: int
     avg_rank: Optional[float]
     recent_rooms: List[DashboardRoomItem]
+
+
+class OnboardingStartRequest(BaseModel):
+    leetcode_username: str = Field(min_length=1, max_length=40)
+
+    @field_validator('leetcode_username')
+    @classmethod
+    def normalize_leetcode_username(cls, value: str) -> str:
+        return value.strip()
+
+
+class OnboardingStartResponse(BaseModel):
+    problem_slug: str
+    problem_title: str
+    instructions: str
+    reference_code: str
+    issued_at: datetime
+    expires_at: datetime
+
+
+class OnboardingVerifyResponse(BaseModel):
+    verified: bool
+    verified_at: datetime
+    me: MeResponse

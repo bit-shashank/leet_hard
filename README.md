@@ -1,13 +1,14 @@
-# LeetCode Room Race MVP
+# LeetRace
 
-Full-stack implementation of a private LeetCode race platform:
+Full-stack implementation of LeetRace, a competitive LeetCode room platform:
 - `frontend`: Next.js App Router UI (deploy to Vercel)
 - `backend`: FastAPI API with Postgres persistence (deploy to Render)
 - `database`: Supabase Postgres via `DATABASE_URL`
 
 ## Features
-- Google OAuth login via Supabase Auth (hard cutover, login required)
-- Account profile with one primary LeetCode username
+- Public room discovery (lobby + active) even for logged-out users
+- Google OAuth login via Supabase Auth for all room actions
+- Mandatory Getting Started onboarding with immutable verified LeetCode username
 - Create room with configurable settings (difficulty mix, source, strict-check, timer, schedule)
 - Optional room passcode
 - Auto-started challenge at scheduled time
@@ -41,6 +42,12 @@ python backend/run.py
 ```
 
 API docs: `http://localhost:8000/docs`
+
+Run migrations:
+```bash
+cd backend
+alembic upgrade head
+```
 
 Run backend tests:
 ```bash
@@ -82,8 +89,10 @@ Frontend app: `http://localhost:3000`
 - Vercel (frontend): set `NEXT_PUBLIC_API_BASE_URL` to Render backend URL.
 - Render (backend): set all backend env vars; point `DATABASE_URL` to Supabase Postgres.
 - Render Python version: use `3.12.3` (`PYTHON_VERSION=3.12.3`).
-- Supabase: create a project, enable Google provider, configure redirect URLs for localhost + Vercel.
+- Supabase Auth: set `Site URL` to `https://leet-hard.vercel.app`.
+- Supabase Auth redirect allow-list: add `http://localhost:3000`, `https://leet-hard.vercel.app`, and preview URLs if used.
 - Run DB migrations before serving traffic: `alembic upgrade head`.
+- After Google OAuth, users complete Getting Started (Fizz Buzz accepted submission check) before create/join.
 
 Detailed step-by-step production guide:
 - [DEPLOYMENT.md](/home/shashank-sahu/Documents/leet_hard/DEPLOYMENT.md)

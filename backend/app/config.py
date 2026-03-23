@@ -12,7 +12,7 @@ ENV_FILE = BASE_DIR / '.env'
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding='utf-8', extra='ignore')
 
-    app_name: str = 'LeetCode Room Race API'
+    app_name: str = 'LeetRace API'
     app_env: str = 'dev'
 
     database_url: str = 'sqlite:///./leetcode_room_race.db'

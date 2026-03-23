@@ -7,9 +7,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { SectionCard } from "@/components/section-card";
+import { ShareCopyButton } from "@/components/share-copy-button";
 import { ApiError, getRoomState, toggleManualSolve } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { formatProblemSource } from "@/lib/problem-source";
+import { copyRoomShareMessage } from "@/lib/share-room";
 import type { ProblemPublic, RoomStateResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -28,6 +30,7 @@ export default function ActiveRoomPage() {
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
   const [pendingSlug, setPendingSlug] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
@@ -114,6 +117,33 @@ export default function ActiveRoomPage() {
     }
   }
 
+  async function handleShareRoom() {
+    if (!state?.room) return;
+
+    setShareCopied(false);
+    try {
+      await copyRoomShareMessage({
+        roomCode,
+        roomTitle: state.room.room_title,
+        status: state.room.status,
+        scheduledStartAt: state.room.scheduled_start_at,
+        startsAt: state.room.starts_at,
+        endsAt: state.room.ends_at,
+        durationMinutes: state.room.duration_minutes,
+        easyCount: state.room.easy_count,
+        mediumCount: state.room.medium_count,
+        hardCount: state.room.hard_count,
+        problemSource: state.room.problem_source,
+        strictCheck: state.room.strict_check,
+        hasPasscode: state.room.has_passcode,
+      });
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1600);
+    } catch {
+      setError("Could not copy invite. Please try again.");
+    }
+  }
+
   if (authLoading) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
@@ -166,6 +196,7 @@ export default function ActiveRoomPage() {
             <p className="text-xs uppercase tracking-wide text-emerald-200">Time Left</p>
             <p className="font-mono text-2xl font-semibold text-emerald-100">{countdown}</p>
           </div>
+          <ShareCopyButton copied={shareCopied} onClick={() => void handleShareRoom()} />
         </div>
         <p className="mt-2 text-xs text-cyan-200/90">
           Source:{" "}

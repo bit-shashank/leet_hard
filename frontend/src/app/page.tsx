@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { ShareCopyButton } from "@/components/share-copy-button";
 import {
   ApiError,
   createRoom,
@@ -12,9 +13,14 @@ import {
   getDiscoverRooms,
   joinRoom,
 } from "@/lib/api";
-import { savePendingJoinRoomCode, takePendingJoinRoomCode } from "@/lib/auth-intent";
+import {
+  savePendingJoinRoomCode,
+  takePendingJoinError,
+  takePendingJoinRoomCode,
+} from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
 import { formatProblemSource } from "@/lib/problem-source";
+import { copyRoomShareMessage } from "@/lib/share-room";
 import type { DashboardResponse, DiscoverRoomResponse, ProblemSource } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -103,6 +109,7 @@ export default function HomePage() {
 
   const [discoverRooms, setDiscoverRooms] = useState<DiscoverRoomResponse[]>([]);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+  const [copiedRoomCode, setCopiedRoomCode] = useState<string | null>(null);
 
   const joinSectionRef = useRef<HTMLElement | null>(null);
   const totalProblems = useMemo(
@@ -128,6 +135,13 @@ export default function HomePage() {
       router.replace("/getting-started");
     }
   }, [authLoading, onboardingRequired, profileLoading, router, user]);
+
+  useEffect(() => {
+    const pendingJoinError = takePendingJoinError();
+    if (pendingJoinError) {
+      setError(pendingJoinError);
+    }
+  }, []);
 
   const fetchDiscoverRooms = useCallback(async () => {
     try {
@@ -320,6 +334,28 @@ export default function HomePage() {
     joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  async function handleShareDiscoverRoom(room: DiscoverRoomResponse) {
+    try {
+      await copyRoomShareMessage({
+        roomCode: room.room_code,
+        roomTitle: room.room_title,
+        status: room.status,
+        scheduledStartAt: room.scheduled_start_at,
+        startsAt: room.starts_at,
+        endsAt: room.ends_at,
+        easyCount: room.easy_count,
+        mediumCount: room.medium_count,
+        hardCount: room.hard_count,
+        problemSource: room.problem_source,
+        hasPasscode: room.has_passcode,
+      });
+      setCopiedRoomCode(room.room_code.toUpperCase());
+      window.setTimeout(() => setCopiedRoomCode(null), 1600);
+    } catch {
+      setError("Could not copy room invite. Please try again.");
+    }
+  }
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 py-10 md:px-8">
       <header className="mb-8 rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 shadow-lg shadow-cyan-950/20 backdrop-blur md:p-8">
@@ -462,11 +498,18 @@ export default function HomePage() {
                         {room.room_code}
                       </p>
                     </div>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
-                    >
-                      {room.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
+                      >
+                        {room.status}
+                      </span>
+                      <ShareCopyButton
+                        copied={copiedRoomCode === room.room_code.toUpperCase()}
+                        onClick={() => void handleShareDiscoverRoom(room)}
+                        className="h-8 w-8"
+                      />
+                    </div>
                   </div>
 
                   <p className="mt-2 text-xs text-slate-400">{roomTimingText(room)}</p>

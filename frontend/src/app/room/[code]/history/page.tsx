@@ -7,9 +7,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { SectionCard } from "@/components/section-card";
+import { ShareCopyButton } from "@/components/share-copy-button";
 import { ApiError, getRoomHistory, getRoomState } from "@/lib/api";
 import { prettyDateTime } from "@/lib/format";
 import { formatProblemSource } from "@/lib/problem-source";
+import { copyRoomShareMessage } from "@/lib/share-room";
 import type { HistoryResponse } from "@/lib/types";
 
 function parseApiError(error: unknown) {
@@ -26,6 +28,7 @@ export default function RoomHistoryPage() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
   useEffect(() => {
     if (authLoading || profileLoading) return;
@@ -74,6 +77,33 @@ export default function RoomHistoryPage() {
   }, [accessToken, roomCode, router]);
 
   const winner = useMemo(() => history?.leaderboard[0] ?? null, [history?.leaderboard]);
+
+  async function handleShareRoom() {
+    if (!history?.room) return;
+
+    setShareCopied(false);
+    try {
+      await copyRoomShareMessage({
+        roomCode,
+        roomTitle: history.room.room_title,
+        status: history.room.status,
+        scheduledStartAt: history.room.scheduled_start_at,
+        startsAt: history.room.starts_at,
+        endsAt: history.room.ends_at,
+        durationMinutes: history.room.duration_minutes,
+        easyCount: history.room.easy_count,
+        mediumCount: history.room.medium_count,
+        hardCount: history.room.hard_count,
+        problemSource: history.room.problem_source,
+        strictCheck: history.room.strict_check,
+        hasPasscode: history.room.has_passcode,
+      });
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1600);
+    } catch {
+      setError("Could not copy invite. Please try again.");
+    }
+  }
 
   if (authLoading) {
     return (
@@ -136,6 +166,7 @@ export default function RoomHistoryPage() {
             >
               Home
             </Link>
+            <ShareCopyButton copied={shareCopied} onClick={() => void handleShareRoom()} />
           </div>
         </div>
       </header>

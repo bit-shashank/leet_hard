@@ -6,10 +6,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { formatProblemSource } from "@/lib/problem-source";
+import { copyRoomShareMessage } from "@/lib/share-room";
 import type { ProblemSource, RoomStateResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -38,6 +40,7 @@ export default function LobbyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [formLoadedForRoom, setFormLoadedForRoom] = useState<string | null>(null);
@@ -180,6 +183,33 @@ export default function LobbyPage() {
     }
   }
 
+  async function handleShareRoom() {
+    if (!state?.room) return;
+
+    setShareCopied(false);
+    try {
+      await copyRoomShareMessage({
+        roomCode,
+        roomTitle: state.room.room_title,
+        status: state.room.status,
+        scheduledStartAt: state.room.scheduled_start_at,
+        startsAt: state.room.starts_at,
+        endsAt: state.room.ends_at,
+        durationMinutes: state.room.duration_minutes,
+        easyCount: state.room.easy_count,
+        mediumCount: state.room.medium_count,
+        hardCount: state.room.hard_count,
+        problemSource: state.room.problem_source,
+        strictCheck: state.room.strict_check,
+        hasPasscode: state.room.has_passcode,
+      });
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1600);
+    } catch {
+      setError("Could not copy invite. Please try again.");
+    }
+  }
+
   if (authLoading) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
@@ -237,6 +267,7 @@ export default function LobbyPage() {
           >
             Back Home
           </Link>
+          <ShareCopyButton copied={shareCopied} onClick={() => void handleShareRoom()} />
         </div>
         <p className="mt-2 text-xs text-cyan-200/90">Signed in as @{me?.primary_leetcode_username}</p>
       </header>

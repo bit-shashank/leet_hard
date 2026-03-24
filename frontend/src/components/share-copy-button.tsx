@@ -7,10 +7,21 @@ type ShareCopyButtonProps = {
 
 function ShareIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
-      <path d="M12 16V4" />
-      <path d="m7 9 5-5 5 5" />
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 10.7 6.8-3.4" />
+      <path d="m8.6 13.3 6.8 3.4" />
     </svg>
   );
 }

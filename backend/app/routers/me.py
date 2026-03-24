@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
@@ -265,6 +265,16 @@ def update_me(
         db.refresh(current_user)
 
     return _to_me_response(current_user)
+
+
+@router.delete('', status_code=status.HTTP_204_NO_CONTENT)
+def delete_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.delete(current_user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post('/onboarding/start', response_model=OnboardingStartResponse)

@@ -6,6 +6,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
@@ -345,12 +346,13 @@ export default function LobbyPage() {
               </label>
               <label className="block">
                 Scheduled Start
-                <input
-                  type="datetime-local"
+                <DateTimeInput
                   required
                   value={startAtLocal}
-                  onChange={(e) => setStartAtLocal(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  onChange={setStartAtLocal}
+                  ariaLabel="scheduled start"
+                  wrapperClassName="mt-1"
+                  inputClassName="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
               <label className="block">
@@ -371,35 +373,38 @@ export default function LobbyPage() {
               <div className="grid grid-cols-3 gap-2">
                 <label className="block">
                   Easy
-                  <input
-                    type="number"
+                  <NumberStepperInput
                     min={0}
                     max={10}
                     value={easyCount}
-                    onChange={(e) => setEasyCount(Number(e.target.value))}
-                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    onChange={setEasyCount}
+                    ariaLabel="easy problem count"
+                    wrapperClassName="mt-1"
+                    inputClassName="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                   />
                 </label>
                 <label className="block">
                   Medium
-                  <input
-                    type="number"
+                  <NumberStepperInput
                     min={0}
                     max={10}
                     value={mediumCount}
-                    onChange={(e) => setMediumCount(Number(e.target.value))}
-                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    onChange={setMediumCount}
+                    ariaLabel="medium problem count"
+                    wrapperClassName="mt-1"
+                    inputClassName="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                   />
                 </label>
                 <label className="block">
                   Hard
-                  <input
-                    type="number"
+                  <NumberStepperInput
                     min={0}
                     max={10}
                     value={hardCount}
-                    onChange={(e) => setHardCount(Number(e.target.value))}
-                    className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    onChange={setHardCount}
+                    ariaLabel="hard problem count"
+                    wrapperClassName="mt-1"
+                    inputClassName="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                   />
                 </label>
               </div>
@@ -417,13 +422,14 @@ export default function LobbyPage() {
               </label>
               <label className="block">
                 Duration (minutes)
-                <input
-                  type="number"
+                <NumberStepperInput
                   min={15}
                   max={180}
                   value={durationMinutes}
-                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                  className="mt-1 w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-10 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  onChange={setDurationMinutes}
+                  ariaLabel="duration in minutes"
+                  wrapperClassName="mt-1"
+                  inputClassName="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
                 />
               </label>
               <label className="block">

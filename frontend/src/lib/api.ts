@@ -60,6 +60,10 @@ async function request<T>(
     throw new ApiError(detail, response.status);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -148,6 +152,13 @@ export function updateMe(payload: UpdateMeRequest, accessToken: string) {
   return request<MeResponse>("/api/v1/me", {
     method: "PATCH",
     body: payload,
+    accessToken,
+  });
+}
+
+export function deleteMe(accessToken: string) {
+  return request<void>("/api/v1/me", {
+    method: "DELETE",
     accessToken,
   });
 }

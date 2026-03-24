@@ -1,4 +1,3 @@
-import { formatProblemSource } from "@/lib/problem-source";
 import type { ProblemSource, RoomStatus } from "@/lib/types";
 
 type ShareRoomInput = {
@@ -19,7 +18,17 @@ type ShareRoomInput = {
 
 function formatDate(value: string | null) {
   if (!value) return "TBD";
-  return new Date(value).toLocaleString();
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "TBD";
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+  const dayMonth = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
+  return `${time}, ${dayMonth}`;
 }
 
 function normalizeRoomCode(roomCode: string) {
@@ -36,33 +45,48 @@ function resolveJoinUrl(roomCode: string) {
 
 function getStatusLine(input: ShareRoomInput) {
   if (input.status === "active") {
-    return `Status: Live now (ends ${formatDate(input.endsAt)})`;
+    return `Live now • Ends ${formatDate(input.endsAt)}`;
   }
   if (input.status === "ended") {
-    return `Status: Ended (started ${formatDate(input.startsAt)})`;
+    return `Completed • Started ${formatDate(input.startsAt)}`;
   }
-  return `Status: Lobby (starts ${formatDate(input.scheduledStartAt)})`;
+  return `Starts ${formatDate(input.scheduledStartAt)}`;
+}
+
+function problemLine(input: ShareRoomInput) {
+  const entries = [
+    { count: input.easyCount, label: "easy" },
+    { count: input.mediumCount, label: "medium" },
+    { count: input.hardCount, label: "hard" },
+  ].filter((entry) => entry.count > 0);
+
+  if (!entries.length) return "No problems configured";
+  if (entries.length === 1) {
+    const only = entries[0];
+    return `${only.count} ${only.label} problem${only.count === 1 ? "" : "s"}`;
+  }
+  return `Problems: ${entries.map((entry) => `${entry.count} ${entry.label}`).join(" • ")}`;
 }
 
 export function buildRoomShareMessage(input: ShareRoomInput) {
   const roomCode = normalizeRoomCode(input.roomCode);
   const joinUrl = resolveJoinUrl(roomCode);
-  const lines = [
-    `Join my LeetRace room: ${input.roomTitle}`,
-    `Room Code: ${roomCode}`,
-    getStatusLine(input),
-    `Difficulty Mix: Easy ${input.easyCount} | Medium ${input.mediumCount} | Hard ${input.hardCount}`,
-    `Source: ${formatProblemSource(input.problemSource)}`,
-    `Passcode: ${input.hasPasscode ? "Required" : "Not required"}`,
-    `Join Link: ${joinUrl}`,
-  ];
-
+  const details: string[] = [getStatusLine(input), problemLine(input)];
   if (typeof input.durationMinutes === "number") {
-    lines.splice(3, 0, `Duration: ${input.durationMinutes} minutes`);
+    details.push(`${input.durationMinutes} min sprint`);
   }
-  if (typeof input.strictCheck === "boolean") {
-    lines.splice(lines.length - 2, 0, `Strict Checking: ${input.strictCheck ? "Enabled" : "Disabled"}`);
+  if (input.hasPasscode) {
+    details.push("Passcode required");
   }
+
+  const lines = [
+    `You're invited to my LeetRace room: ${input.roomTitle}`,
+    "",
+    ...details,
+    "",
+    `Use code ${roomCode} to join.`,
+    `Join: ${joinUrl}`,
+  ];
 
   return {
     joinUrl,

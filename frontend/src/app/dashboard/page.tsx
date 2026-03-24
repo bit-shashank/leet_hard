@@ -6,7 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
-import { ApiError, getDashboard, updateMe } from "@/lib/api";
+import { ApiError, deleteMe, getDashboard, updateMe } from "@/lib/api";
+import { saveFlashNotice } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import type { DashboardResponse } from "@/lib/types";
@@ -25,11 +26,12 @@ function roomHref(roomCode: string, status: "lobby" | "active" | "ended") {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { accessToken, authLoading, me, refreshMe, user } = useAuth();
+  const { accessToken, authLoading, me, refreshMe, signOut, user } = useAuth();
 
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
@@ -90,6 +92,31 @@ export default function DashboardPage() {
       setProfileError(parseApiError(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDeleteProfile() {
+    if (!accessToken || deleting) return;
+    const confirmed = window.confirm(
+      "Delete your profile? This will remove your app profile data and sign you out. This action cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setProfileError(null);
+    try {
+      await deleteMe(accessToken);
+      try {
+        await signOut();
+      } catch {
+        // fallback to redirect even if sign-out request fails
+      }
+      saveFlashNotice("Your profile was deleted successfully.");
+      router.replace("/");
+    } catch (err) {
+      setProfileError(parseApiError(err));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -179,6 +206,15 @@ export default function DashboardPage() {
               className="rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save Profile"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleDeleteProfile()}
+              disabled={deleting}
+              className="ml-2 rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deleting ? "Deleting..." : "Delete Profile"}
             </button>
           </form>
         </article>

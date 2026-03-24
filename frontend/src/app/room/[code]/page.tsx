@@ -206,6 +206,9 @@ export default function ActiveRoomPage() {
         <p className="mt-1 text-xs text-cyan-200/90">
           Strict checking: {state?.room.strict_check ? "On" : "Off"}
         </p>
+        <p className="mt-1 text-xs text-cyan-200/90">
+          Exclude pre-solved: {state?.room.exclude_pre_solved ? "On" : "Off"}
+        </p>
       </header>
 
       {!canManuallySolve ? (

@@ -188,6 +188,9 @@ export default function RoomHistoryPage() {
           <p className="mt-1 text-xs text-emerald-200/90">
             Strict checking: {history?.room.strict_check ? "On" : "Off"}
           </p>
+          <p className="mt-1 text-xs text-emerald-200/90">
+            Exclude pre-solved: {history?.room.exclude_pre_solved ? "On" : "Off"}
+          </p>
         </section>
       ) : null}
 

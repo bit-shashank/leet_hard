@@ -1,6 +1,6 @@
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
@@ -100,8 +100,10 @@ def choose_random_problems_by_difficulty(
     easy_count: int,
     medium_count: int,
     hard_count: int,
+    excluded_slugs: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     selected: List[Dict[str, Any]] = []
+    excluded = {_normalize_slug(slug) for slug in (excluded_slugs or set()) if slug}
 
     difficulty_plan = [
         ('Easy', easy_count),
@@ -113,6 +115,13 @@ def choose_random_problems_by_difficulty(
         if count <= 0:
             continue
         problems = get_problem_pool(difficulty)
+        if excluded:
+            problems = [
+                problem
+                for problem in problems
+                if _normalize_slug(problem.get('title_slug') or problem.get('titleSlug') or '')
+                not in excluded
+            ]
         if count > len(problems):
             raise ProblemSelectionError(
                 f'Requested {count} {difficulty} problems exceeds available problem pool'
@@ -128,9 +137,17 @@ def choose_random_problems_by_source(
     easy_count: int,
     medium_count: int,
     hard_count: int,
+    excluded_slugs: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
+    excluded = {_normalize_slug(slug) for slug in (excluded_slugs or set()) if slug}
+
     if source == ProblemSource.RANDOM:
-        return choose_random_problems_by_difficulty(easy_count, medium_count, hard_count)
+        return choose_random_problems_by_difficulty(
+            easy_count,
+            medium_count,
+            hard_count,
+            excluded_slugs=excluded,
+        )
 
     total_requested = easy_count + medium_count + hard_count
     sheet_slugs = get_sheet_slugs(source)
@@ -144,6 +161,8 @@ def choose_random_problems_by_source(
 
             normalized_slug = _normalize_slug(slug)
             if normalized_slug not in sheet_slugs:
+                continue
+            if normalized_slug in excluded:
                 continue
 
             all_candidates[normalized_slug] = problem
@@ -211,7 +230,7 @@ def choose_random_problems_by_source(
 
 
 def choose_random_medium_non_paid_problems(count: int) -> List[Dict[str, Any]]:
-    return choose_random_problems_by_difficulty(0, count, 0)
+    return choose_random_problems_by_difficulty(0, count, 0, excluded_slugs=None)
 
 
 def get_recent_submissions(username: str, limit: int = 100) -> List[Dict[str, Any]]:

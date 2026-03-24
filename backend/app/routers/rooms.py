@@ -68,6 +68,10 @@ def _normalize_room_code(room_code: str) -> str:
     return room_code.strip().upper()
 
 
+def _normalize_slug(slug: str) -> str:
+    return slug.strip().strip('/').lower()
+
+
 def _is_room_joinable(room: Room) -> bool:
     if room.status not in (RoomStatus.LOBBY, RoomStatus.ACTIVE):
         return False
@@ -87,6 +91,7 @@ def _room_to_public(room: Room) -> RoomPublic:
         easy_count=room.easy_count,
         medium_count=room.medium_count,
         hard_count=room.hard_count,
+        exclude_pre_solved=room.exclude_pre_solved,
         strict_check=room.strict_check,
         duration_minutes=room.duration_minutes,
         scheduled_start_at=room.scheduled_start_at,
@@ -385,6 +390,44 @@ def _match_accepted_submission_time(
     return solved_at
 
 
+def _accepted_submission_slug(submission: dict) -> Optional[str]:
+    status_display = submission.get('statusDisplay')
+    status_code = submission.get('status')
+    is_accepted = status_display == 'Accepted' or status_code == 10
+    if not is_accepted:
+        return None
+
+    slug = submission.get('titleSlug') or submission.get('title_slug')
+    if not slug:
+        return None
+    return _normalize_slug(str(slug))
+
+
+def _collect_pre_solved_problem_slugs(
+    db: Session,
+    room: Room,
+) -> tuple[set[str], list[str]]:
+    participants = db.scalars(
+        select(Participant).where(Participant.room_id == room.id)
+    ).all()
+    solved_slugs: set[str] = set()
+    errors: list[str] = []
+
+    for participant in participants:
+        try:
+            submissions = get_recent_submissions(participant.leetcode_username, limit=100)
+        except LeetCodeServiceError as exc:
+            errors.append(f'{participant.leetcode_username}: {exc}')
+            continue
+
+        for submission in submissions:
+            accepted_slug = _accepted_submission_slug(submission)
+            if accepted_slug:
+                solved_slugs.add(accepted_slug)
+
+    return solved_slugs, errors
+
+
 def _get_strict_verified_solve_time(room: Room, participant: Participant, problem_slug: str) -> datetime:
     solve_window_start, solve_window_end = _participant_solve_window(room, participant)
 
@@ -460,12 +503,20 @@ def _sync_room_solves(db: Session, room: Room) -> None:
             _upsert_auto_solve(db, room, participant, problem_slug, solved_at)
 
     room.last_synced_at = now
+    pre_solved_warning = None
+    if room.sync_warning and room.sync_warning.startswith('Pre-solved'):
+        pre_solved_warning = room.sync_warning
     room.sync_warning = None
     if errors:
         room.sync_warning = (
             'Auto sync partial: manual fallback is available. '
             + '; '.join(errors[:3])
         )
+    if pre_solved_warning:
+        if room.sync_warning:
+            room.sync_warning = f'{pre_solved_warning} {room.sync_warning}'
+        else:
+            room.sync_warning = pre_solved_warning
 
 
 def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> None:
@@ -479,18 +530,57 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
     if isinstance(problem_source, str):
         problem_source = ProblemSource(problem_source)
 
-    selected = choose_random_problems_by_source(
-        problem_source,
-        easy_count=room.easy_count,
-        medium_count=room.medium_count,
-        hard_count=room.hard_count,
-    )
+    excluded_slugs: set[str] = set()
+    exclusion_fetch_errors: list[str] = []
+    relaxed_exclusion = False
+    if room.exclude_pre_solved:
+        excluded_slugs, exclusion_fetch_errors = _collect_pre_solved_problem_slugs(db, room)
+
+    try:
+        if room.exclude_pre_solved:
+            selected = choose_random_problems_by_source(
+                problem_source,
+                easy_count=room.easy_count,
+                medium_count=room.medium_count,
+                hard_count=room.hard_count,
+                excluded_slugs=excluded_slugs,
+            )
+        else:
+            selected = choose_random_problems_by_source(
+                problem_source,
+                easy_count=room.easy_count,
+                medium_count=room.medium_count,
+                hard_count=room.hard_count,
+            )
+    except ProblemSelectionError:
+        if not room.exclude_pre_solved:
+            raise
+        relaxed_exclusion = True
+        selected = choose_random_problems_by_source(
+            problem_source,
+            easy_count=room.easy_count,
+            medium_count=room.medium_count,
+            hard_count=room.hard_count,
+            excluded_slugs=None,
+        )
 
     room.starts_at = now
     room.ends_at = now + timedelta(minutes=room.duration_minutes)
     room.status = RoomStatus.ACTIVE
     room.last_synced_at = None
     room.sync_warning = None
+    warning_parts: list[str] = []
+    if exclusion_fetch_errors:
+        warning_parts.append(
+            'Pre-solved exclusion was partial: '
+            + '; '.join(exclusion_fetch_errors[:3])
+        )
+    if relaxed_exclusion:
+        warning_parts.append(
+            'Pre-solved exclusion was relaxed because insufficient unsolved problems were available.'
+        )
+    if warning_parts:
+        room.sync_warning = ' '.join(warning_parts)
 
     for order, problem in enumerate(selected, start=1):
         slug = problem.get('title_slug') or problem.get('titleSlug')
@@ -760,6 +850,7 @@ def create_room(
         easy_count=payload.settings.easy_count,
         medium_count=payload.settings.medium_count,
         hard_count=payload.settings.hard_count,
+        exclude_pre_solved=payload.settings.exclude_pre_solved,
         strict_check=payload.settings.strict_check,
         duration_minutes=payload.settings.duration_minutes,
         scheduled_start_at=scheduled_start_at,
@@ -929,6 +1020,7 @@ def update_room_settings(
     room.easy_count = payload.settings.easy_count
     room.medium_count = payload.settings.medium_count
     room.hard_count = payload.settings.hard_count
+    room.exclude_pre_solved = payload.settings.exclude_pre_solved
     room.strict_check = payload.settings.strict_check
     room.duration_minutes = payload.settings.duration_minutes
     room.scheduled_start_at = scheduled_start_at

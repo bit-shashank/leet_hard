@@ -52,6 +52,7 @@ export default function LobbyPage() {
   const [easyCount, setEasyCount] = useState(0);
   const [mediumCount, setMediumCount] = useState(4);
   const [hardCount, setHardCount] = useState(0);
+  const [excludePreSolved, setExcludePreSolved] = useState(false);
   const [strictCheck, setStrictCheck] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [startAtLocal, setStartAtLocal] = useState("");
@@ -116,6 +117,7 @@ export default function LobbyPage() {
     setEasyCount(state.room.easy_count);
     setMediumCount(state.room.medium_count);
     setHardCount(state.room.hard_count);
+    setExcludePreSolved(state.room.exclude_pre_solved);
     setStrictCheck(state.room.strict_check);
     setDurationMinutes(state.room.duration_minutes);
     setStartAtLocal(toLocalDateTimeValue(new Date(state.room.scheduled_start_at)));
@@ -169,6 +171,7 @@ export default function LobbyPage() {
             easy_count: easyCount,
             medium_count: mediumCount,
             hard_count: hardCount,
+            exclude_pre_solved: excludePreSolved,
             strict_check: strictCheck,
             duration_minutes: durationMinutes,
             start_at: parsedStartAt.toISOString(),
@@ -412,6 +415,15 @@ export default function LobbyPage() {
                 Total problems: {totalProblems} (allowed 3 to 10)
               </div>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                <span>Exclude pre-solved problems</span>
+                <input
+                  type="checkbox"
+                  checked={excludePreSolved}
+                  onChange={(e) => setExcludePreSolved(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 <span>Strict checking</span>
                 <input
                   type="checkbox"
@@ -470,6 +482,9 @@ export default function LobbyPage() {
               </div>
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Timer: {state?.room.duration_minutes ?? "-"} minutes
+              </div>
+              <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                Exclude pre-solved: {state?.room.exclude_pre_solved ? "On" : "Off"}
               </div>
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Strict checking: {state?.room.strict_check ? "On" : "Off"}

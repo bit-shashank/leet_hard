@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 import { useAuth } from "@/components/auth-provider";
+import { InlineSpinner, PageLoader, SkeletonBlock } from "@/components/loading";
 import { ApiError, getRoomState } from "@/lib/api";
 import { requiresOnboarding } from "@/lib/onboarding";
 import {
@@ -96,17 +97,25 @@ export default function JoinResolverPage() {
   ]);
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-      <div className="rounded-2xl border border-cyan-300/30 bg-cyan-500/10 p-6">
-        <h1 className="text-xl font-semibold text-cyan-100">Opening Room</h1>
-        <p className="mt-2 text-sm text-cyan-100/90">Resolving shared room link...</p>
+    <PageLoader
+      title="Opening room..."
+      subtitle="Resolving your shared invite and checking the best destination."
+    >
+      <div className="space-y-4">
+        <div className="rounded-xl border border-cyan-300/25 bg-cyan-500/10 p-4">
+          <div className="inline-flex items-center gap-2 text-sm text-cyan-100">
+            <InlineSpinner className="h-4 w-4" label="Resolving room link" />
+            Resolving shared room link...
+          </div>
+          <SkeletonBlock className="mt-3 h-3 w-2/3" />
+        </div>
         <Link
           href="/"
-          className="mt-4 inline-flex rounded-lg border border-cyan-300/40 px-3 py-2 text-sm text-cyan-100 transition hover:bg-cyan-500/10"
+          className="inline-flex rounded-lg border border-cyan-300/40 px-3 py-2 text-sm text-cyan-100 transition hover:bg-cyan-500/10"
         >
           Back to Home
         </Link>
       </div>
-    </main>
+    </PageLoader>
   );
 }

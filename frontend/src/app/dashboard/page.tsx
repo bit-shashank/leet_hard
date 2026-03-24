@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonText } from "@/components/loading";
 import { ApiError, deleteMe, getDashboard, updateMe } from "@/lib/api";
 import { saveFlashNotice } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
@@ -22,6 +23,39 @@ function roomHref(roomCode: string, status: "lobby" | "active" | "ended") {
   if (status === "active") return `/room/${normalized}`;
   if (status === "ended") return `/room/${normalized}/history`;
   return `/room/${normalized}/lobby`;
+}
+
+function StatsSkeleton() {
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-3">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={`stat-skeleton-${index}`} className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-3">
+          <SkeletonBlock className="h-3 w-2/3" />
+          <SkeletonBlock className="mt-2 h-8 w-1/2" />
+        </div>
+      ))}
+      <div className="col-span-2 rounded-xl border border-slate-700/60 bg-slate-950/40 p-3">
+        <SkeletonBlock className="h-3 w-1/3" />
+        <SkeletonBlock className="mt-2 h-8 w-1/4" />
+      </div>
+    </div>
+  );
+}
+
+function RecentRoomSkeleton() {
+  return (
+    <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <SkeletonBlock className="h-5 w-3/5" />
+          <SkeletonBlock className="mt-2 h-3 w-20" />
+        </div>
+        <SkeletonBlock className="h-5 w-16 rounded-full" />
+      </div>
+      <SkeletonText className="mt-3" lines={2} />
+      <SkeletonBlock className="mt-4 h-8 w-24 rounded-lg" />
+    </article>
+  );
 }
 
 export default function DashboardPage() {
@@ -121,13 +155,7 @@ export default function DashboardPage() {
   }
 
   if (authLoading) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Checking session...
-        </div>
-      </main>
-    );
+    return <PageLoader title="Checking session..." subtitle="Loading your dashboard context." />;
   }
 
   if (!user || !accessToken) {
@@ -205,7 +233,14 @@ export default function DashboardPage() {
               disabled={saving}
               className="rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Save Profile"}
+              {saving ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Saving profile" />
+                  Saving...
+                </span>
+              ) : (
+                "Save Profile"
+              )}
             </button>
 
             <button
@@ -214,7 +249,14 @@ export default function DashboardPage() {
               disabled={deleting}
               className="ml-2 rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {deleting ? "Deleting..." : "Delete Profile"}
+              {deleting ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Deleting profile" />
+                  Deleting...
+                </span>
+              ) : (
+                "Delete Profile"
+              )}
             </button>
           </form>
         </article>
@@ -222,7 +264,7 @@ export default function DashboardPage() {
         <article className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
           <h2 className="text-xl font-semibold text-slate-100">Core Stats</h2>
           {loading ? (
-            <p className="mt-3 text-sm text-slate-300">Loading stats...</p>
+            <StatsSkeleton />
           ) : (
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-3">
@@ -264,7 +306,11 @@ export default function DashboardPage() {
           </button>
         </div>
         {loading ? (
-          <p className="text-sm text-slate-300">Loading rooms...</p>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <RecentRoomSkeleton key={`recent-room-skeleton-${index}`} />
+            ))}
+          </div>
         ) : dashboard?.recent_rooms.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {dashboard.recent_rooms.map((room) => (

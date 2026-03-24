@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
+import { PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { SectionCard } from "@/components/section-card";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import { ApiError, getRoomHistory, getRoomState } from "@/lib/api";
@@ -18,6 +19,34 @@ import type { HistoryResponse } from "@/lib/types";
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Could not load room history.";
+}
+
+function RoomHistoryLoadingSkeleton() {
+  return (
+    <PageLoader title="Loading history..." subtitle="Gathering final standings and event timeline.">
+      <div className="space-y-4">
+        <SkeletonBlock className="h-20 w-full rounded-xl" />
+        <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <SkeletonText lines={2} />
+            <div className="mt-4 space-y-3">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonRow key={`history-leaderboard-skeleton-${index}`} columns={4} />
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <SkeletonText lines={2} />
+            <div className="mt-4 space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <SkeletonBlock key={`history-event-skeleton-${index}`} className="h-12 w-full rounded-lg" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </PageLoader>
+  );
 }
 
 export default function RoomHistoryPage() {
@@ -107,13 +136,7 @@ export default function RoomHistoryPage() {
   }
 
   if (authLoading) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Checking session...
-        </div>
-      </main>
-    );
+    return <PageLoader title="Checking session..." subtitle="Verifying your account access." />;
   }
 
   if (!user || !accessToken) {
@@ -131,13 +154,7 @@ export default function RoomHistoryPage() {
   }
 
   if (loading && !history) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Loading history...
-        </div>
-      </main>
-    );
+    return <RoomHistoryLoadingSkeleton />;
   }
 
   return (

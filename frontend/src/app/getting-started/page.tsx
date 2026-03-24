@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 
 import { useAuth } from "@/components/auth-provider";
+import { InlineSpinner, PageLoader } from "@/components/loading";
 import { ApiError, startOnboarding, verifyOnboarding } from "@/lib/api";
 import { requiresOnboarding } from "@/lib/onboarding";
 import type { OnboardingStartResponse } from "@/lib/types";
@@ -31,6 +32,7 @@ export default function GettingStartedPage() {
   const [challenge, setChallenge] = useState<OnboardingStartResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [confirmOwnership, setConfirmOwnership] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,20 +105,21 @@ export default function GettingStartedPage() {
 
   async function handleSignIn() {
     setError(null);
+    setSigningIn(true);
     try {
       await signInWithGoogle();
     } catch {
       setError("Unable to start Google sign in. Please try again.");
+      setSigningIn(false);
     }
   }
 
   if (authLoading || profileLoading) {
     return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Preparing getting started...
-        </div>
-      </main>
+      <PageLoader
+        title="Preparing getting started..."
+        subtitle="Setting up your onboarding flow."
+      />
     );
   }
 
@@ -136,9 +139,17 @@ export default function GettingStartedPage() {
           <button
             type="button"
             onClick={() => void handleSignIn()}
-            className="mt-4 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+            disabled={signingIn}
+            className="mt-4 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Sign in with Google
+            {signingIn ? (
+              <span className="inline-flex items-center gap-2">
+                <InlineSpinner className="h-4 w-4" label="Redirecting to Google sign-in" />
+                Redirecting...
+              </span>
+            ) : (
+              "Sign in with Google"
+            )}
           </button>
         </div>
       </main>
@@ -241,7 +252,14 @@ export default function GettingStartedPage() {
               onClick={() => void handleStartOnboarding()}
               className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {submitting ? "Validating..." : "Continue"}
+              {submitting ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Validating LeetCode profile" />
+                  Validating...
+                </span>
+              ) : (
+                "Continue"
+              )}
             </button>
           </div>
         </section>
@@ -347,7 +365,14 @@ export default function GettingStartedPage() {
               onClick={() => void handleVerify()}
               className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {verifying ? "Verifying..." : "Verify"}
+              {verifying ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Verifying account" />
+                  Verifying...
+                </span>
+              ) : (
+                "Verify"
+              )}
             </button>
           </div>
         </section>

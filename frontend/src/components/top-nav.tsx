@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 
 import { AvatarBadge } from "@/components/avatar-badge";
 import { useAuth } from "@/components/auth-provider";
+import { InlineSpinner } from "@/components/loading";
 import { requiresOnboarding } from "@/lib/onboarding";
 
 export function TopNav() {
@@ -85,7 +86,10 @@ export function TopNav() {
 
         <div className="flex items-center gap-3">
           {authLoading ? (
-            <span className="text-xs text-slate-300">Checking session...</span>
+            <span className="inline-flex items-center gap-2 text-xs text-slate-300">
+              <InlineSpinner className="h-3.5 w-3.5" label="Checking session" />
+              Checking session...
+            </span>
           ) : user ? (
             <>
               <div className="hidden items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/70 px-2 py-1 sm:flex">
@@ -101,7 +105,14 @@ export function TopNav() {
                 disabled={pendingAction === "signout"}
                 className="rounded-lg border border-slate-500/60 px-3 py-1.5 text-sm text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {pendingAction === "signout" ? "Signing out..." : "Sign out"}
+                {pendingAction === "signout" ? (
+                  <span className="inline-flex items-center gap-2">
+                    <InlineSpinner className="h-3.5 w-3.5" label="Signing out" />
+                    Signing out...
+                  </span>
+                ) : (
+                  "Sign out"
+                )}
               </button>
             </>
           ) : (
@@ -111,7 +122,14 @@ export function TopNav() {
               disabled={pendingAction === "signin"}
               className="rounded-lg bg-cyan-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {pendingAction === "signin" ? "Redirecting..." : "Sign in with Google"}
+              {pendingAction === "signin" ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-3.5 w-3.5" label="Redirecting to Google sign-in" />
+                  Redirecting...
+                </span>
+              ) : (
+                "Sign in with Google"
+              )}
             </button>
           )}
         </div>

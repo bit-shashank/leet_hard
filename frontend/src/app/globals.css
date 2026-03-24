@@ -34,6 +34,96 @@ a {
   color: inherit;
 }
 
+@keyframes leetrace-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes leetrace-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes leetrace-glaze {
+  0% {
+    transform: translateX(-130%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.22;
+  }
+  80% {
+    opacity: 0.22;
+  }
+  100% {
+    transform: translateX(130%);
+    opacity: 0;
+  }
+}
+
+.skeleton-shimmer {
+  background:
+    linear-gradient(
+      110deg,
+      rgba(51, 65, 85, 0.5) 8%,
+      rgba(100, 116, 139, 0.4) 18%,
+      rgba(51, 65, 85, 0.5) 33%
+    ),
+    rgba(15, 23, 42, 0.75);
+  background-size: 220% 100%;
+  animation: leetrace-shimmer 1.6s linear infinite;
+}
+
+.loading-glaze {
+  position: relative;
+  overflow: hidden;
+}
+
+.loading-glaze::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(186, 230, 253, 0.06) 45%,
+    rgba(224, 242, 254, 0.12) 50%,
+    rgba(186, 230, 253, 0.06) 55%,
+    transparent 80%
+  );
+  transform: translateX(-130%);
+  animation: leetrace-glaze 2.9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.spinner-ring {
+  border-radius: 999px;
+  border: 2px solid rgba(148, 163, 184, 0.35);
+  border-top-color: rgba(103, 232, 249, 0.95);
+  animation: leetrace-spin 0.85s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+    background: rgba(51, 65, 85, 0.65);
+  }
+
+  .loading-glaze::after {
+    animation: none;
+    opacity: 0;
+  }
+
+  .spinner-ring {
+    animation: none;
+  }
+}
+
 .table-grid {
   width: 100%;
   border-collapse: collapse;

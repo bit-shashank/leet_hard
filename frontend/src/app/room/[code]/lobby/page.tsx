@@ -7,6 +7,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
+import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
@@ -30,6 +31,34 @@ function toLocalDateTimeValue(value: Date) {
   const hours = String(value.getHours()).padStart(2, "0");
   const minutes = String(value.getMinutes()).padStart(2, "0");
   return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function LobbyLoadingSkeleton() {
+  return (
+    <PageLoader title="Loading lobby..." subtitle="Fetching room details and participants.">
+      <div className="space-y-4">
+        <SkeletonBlock className="h-24 w-full rounded-xl" />
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <SkeletonText lines={2} />
+            <div className="mt-4 space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <SkeletonRow key={`lobby-participant-skeleton-${index}`} columns={3} />
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <SkeletonText lines={2} />
+            <div className="mt-4 space-y-3">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonBlock key={`lobby-setting-skeleton-${index}`} className="h-9 w-full rounded-lg" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </PageLoader>
+  );
 }
 
 export default function LobbyPage() {
@@ -216,13 +245,7 @@ export default function LobbyPage() {
   }
 
   if (authLoading) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Checking session...
-        </div>
-      </main>
-    );
+    return <PageLoader title="Checking session..." subtitle="Verifying your account access." />;
   }
 
   if (!user || !accessToken) {
@@ -240,13 +263,7 @@ export default function LobbyPage() {
   }
 
   if (loading && !state) {
-    return (
-      <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-16 md:px-8">
-        <div className="rounded-2xl border border-slate-700/60 bg-slate-900/70 p-6 text-slate-200">
-          Loading lobby...
-        </div>
-      </main>
-    );
+    return <LobbyLoadingSkeleton />;
   }
 
   return (
@@ -464,7 +481,14 @@ export default function LobbyPage() {
                 disabled={saving || !validTotal}
                 className="w-full rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Saving..." : "Save Settings"}
+                {saving ? (
+                  <span className="inline-flex items-center gap-2">
+                    <InlineSpinner className="h-4 w-4" label="Saving room settings" />
+                    Saving...
+                  </span>
+                ) : (
+                  "Save Settings"
+                )}
               </button>
             </form>
           ) : (

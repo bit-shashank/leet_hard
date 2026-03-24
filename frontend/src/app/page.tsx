@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
+import { InlineSpinner, SkeletonBlock, SkeletonText } from "@/components/loading";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import {
   ApiError,
@@ -86,6 +87,50 @@ function roomHref(roomCode: string, roomStatus: DiscoverRoomResponse["status"] |
   return `/room/${normalized}/lobby`;
 }
 
+function DiscoverRoomSkeletonCard() {
+  return (
+    <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <SkeletonBlock className="h-5 w-3/5" />
+          <SkeletonBlock className="mt-2 h-3 w-24" />
+        </div>
+        <SkeletonBlock className="h-6 w-20 rounded-full" />
+      </div>
+      <SkeletonBlock className="mt-3 h-3 w-2/3" />
+      <div className="mt-3 flex items-center gap-2">
+        <SkeletonBlock className="h-8 w-8 rounded-full" />
+        <SkeletonBlock className="h-3 w-32" />
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <SkeletonBlock className="h-7 w-full rounded-lg" />
+        <SkeletonBlock className="h-7 w-full rounded-lg" />
+        <SkeletonBlock className="col-span-2 h-7 w-full rounded-lg" />
+      </div>
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <SkeletonBlock className="h-3 w-28" />
+        <SkeletonBlock className="h-8 w-20 rounded-lg" />
+      </div>
+    </article>
+  );
+}
+
+function RecentRoomSkeletonCard() {
+  return (
+    <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <SkeletonBlock className="h-5 w-3/5" />
+          <SkeletonBlock className="mt-2 h-3 w-24" />
+        </div>
+        <SkeletonBlock className="h-6 w-16 rounded-full" />
+      </div>
+      <SkeletonText className="mt-3" lines={2} />
+      <SkeletonBlock className="mt-4 h-8 w-24 rounded-lg" />
+    </article>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { accessToken, authLoading, me, profileLoading, signInWithGoogle, user } = useAuth();
@@ -93,6 +138,7 @@ export default function HomePage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
   const [discoverLoading, setDiscoverLoading] = useState(true);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const [signInLoading, setSignInLoading] = useState(false);
@@ -169,14 +215,18 @@ export default function HomePage() {
   const fetchDashboardData = useCallback(async () => {
     if (!accessToken || onboardingRequired) {
       setDashboard(null);
+      setDashboardLoading(false);
       return;
     }
 
+    setDashboardLoading(true);
     try {
       const response = await getDashboard(accessToken);
       setDashboard(response);
     } catch {
       setDashboard(null);
+    } finally {
+      setDashboardLoading(false);
     }
   }, [accessToken, onboardingRequired]);
 
@@ -403,7 +453,14 @@ export default function HomePage() {
             disabled={signInLoading}
             className="mt-4 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {signInLoading ? "Redirecting..." : "Sign in with Google"}
+            {signInLoading ? (
+              <span className="inline-flex items-center gap-2">
+                <InlineSpinner className="h-3.5 w-3.5" label="Redirecting to Google sign-in" />
+                Redirecting...
+              </span>
+            ) : (
+              "Sign in with Google"
+            )}
           </button>
         </section>
       ) : null}
@@ -419,7 +476,13 @@ export default function HomePage() {
             </div>
           </div>
 
-          {dashboard?.recent_rooms.length ? (
+          {dashboardLoading ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <RecentRoomSkeletonCard key={`recent-room-skeleton-${index}`} />
+              ))}
+            </div>
+          ) : dashboard?.recent_rooms.length ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {dashboard.recent_rooms.map((room) => {
                 const discover = discoverByCode.get(room.room_code.toUpperCase());
@@ -488,7 +551,11 @@ export default function HomePage() {
         </div>
 
         {discoverLoading ? (
-          <p className="text-sm text-slate-300">Loading rooms...</p>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <DiscoverRoomSkeletonCard key={`discover-room-skeleton-${index}`} />
+            ))}
+          </div>
         ) : discoverRooms.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {discoverRooms.map((room) => {
@@ -734,11 +801,16 @@ export default function HomePage() {
               disabled={createLoading || !validTotal}
               className="w-full rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {createLoading
-                ? "Creating..."
-                : !user
-                  ? "Sign in to Create"
-                  : "Create & Enter Lobby"}
+              {createLoading ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Creating room" />
+                  Creating...
+                </span>
+              ) : !user ? (
+                "Sign in to Create"
+              ) : (
+                "Create & Enter Lobby"
+              )}
             </button>
           </form>
         </article>
@@ -778,7 +850,16 @@ export default function HomePage() {
               disabled={joinLoading}
               className="w-full rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {joinLoading ? "Joining..." : !user ? "Sign in to Join" : "Join Room"}
+              {joinLoading ? (
+                <span className="inline-flex items-center gap-2">
+                  <InlineSpinner className="h-4 w-4" label="Joining room" />
+                  Joining...
+                </span>
+              ) : !user ? (
+                "Sign in to Join"
+              ) : (
+                "Join Room"
+              )}
             </button>
           </form>
         </article>

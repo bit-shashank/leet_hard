@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { ApiError, getRoomState } from "@/lib/api";
+import { requiresOnboarding } from "@/lib/onboarding";
 import {
   savePendingJoinError,
   savePendingJoinRoomCode,
@@ -37,7 +38,7 @@ export default function JoinResolverPage() {
       return;
     }
 
-    if (me?.onboarding_required) {
+    if (requiresOnboarding(me)) {
       startedRef.current = true;
       savePendingJoinRoomCode(roomCode);
       router.replace("/getting-started");
@@ -86,7 +87,7 @@ export default function JoinResolverPage() {
   }, [
     accessToken,
     authLoading,
-    me?.onboarding_required,
+    me,
     profileLoading,
     roomCode,
     router,

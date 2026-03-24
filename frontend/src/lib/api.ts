@@ -9,6 +9,7 @@ import type {
   MeResponse,
   OnboardingStartRequest,
   OnboardingStartResponse,
+  OnboardingVerifyRequest,
   OnboardingVerifyResponse,
   RoomStateResponse,
   UpdateMeRequest,
@@ -168,9 +169,13 @@ export function startOnboarding(
   });
 }
 
-export function verifyOnboarding(accessToken: string) {
+export function verifyOnboarding(
+  accessToken: string,
+  payload?: OnboardingVerifyRequest,
+) {
   return request<OnboardingVerifyResponse>("/api/v1/me/onboarding/verify", {
     method: "POST",
+    body: payload ?? {},
     accessToken,
   });
 }

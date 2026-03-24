@@ -180,12 +180,20 @@ export type OnboardingStartRequest = {
 };
 
 export type OnboardingStartResponse = {
-  problem_slug: string;
-  problem_title: string;
+  verification_mode: "soft" | "strict";
+  profile_preview_username: string;
+  profile_preview_avatar_url: string | null;
+  profile_preview_url: string | null;
   instructions: string;
-  reference_code: string;
-  issued_at: string;
-  expires_at: string;
+  problem_slug: string | null;
+  problem_title: string | null;
+  reference_code: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+};
+
+export type OnboardingVerifyRequest = {
+  confirm_ownership?: boolean;
 };
 
 export type OnboardingVerifyResponse = {

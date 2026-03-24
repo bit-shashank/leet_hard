@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -263,12 +263,20 @@ class OnboardingStartRequest(BaseModel):
 
 
 class OnboardingStartResponse(BaseModel):
-    problem_slug: str
-    problem_title: str
+    verification_mode: Literal['soft', 'strict']
+    profile_preview_username: str
+    profile_preview_avatar_url: Optional[str]
+    profile_preview_url: Optional[str]
     instructions: str
-    reference_code: str
-    issued_at: datetime
-    expires_at: datetime
+    problem_slug: Optional[str] = None
+    problem_title: Optional[str] = None
+    reference_code: Optional[str] = None
+    issued_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class OnboardingVerifyRequest(BaseModel):
+    confirm_ownership: bool = False
 
 
 class OnboardingVerifyResponse(BaseModel):

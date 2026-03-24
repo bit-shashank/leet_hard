@@ -19,6 +19,7 @@ import {
   takePendingJoinRoomCode,
 } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
+import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
 import type { DashboardResponse, DiscoverRoomResponse, ProblemSource } from "@/lib/types";
@@ -127,7 +128,7 @@ export default function HomePage() {
     [discoverRooms],
   );
 
-  const onboardingRequired = Boolean(me?.onboarding_required);
+  const onboardingRequired = requiresOnboarding(me);
 
   useEffect(() => {
     if (authLoading || profileLoading || !user) return;

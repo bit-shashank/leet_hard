@@ -2,22 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 
 import { useAuth } from "@/components/auth-provider";
 import { ApiError, startOnboarding, verifyOnboarding } from "@/lib/api";
+import { requiresOnboarding } from "@/lib/onboarding";
 import type { OnboardingStartResponse } from "@/lib/types";
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Something went wrong. Please try again.";
 }
-
-const STEP_TITLES = [
-  "Welcome",
-  "LeetCode ID",
-  "Submit Solution",
-  "Complete",
-] as const;
 
 export default function GettingStartedPage() {
   const router = useRouter();
@@ -36,6 +31,7 @@ export default function GettingStartedPage() {
   const [challenge, setChallenge] = useState<OnboardingStartResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [confirmOwnership, setConfirmOwnership] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,12 +44,18 @@ export default function GettingStartedPage() {
     if (authLoading || profileLoading) return;
     if (!user || !accessToken) return;
 
-    if (!me?.onboarding_required) {
+    if (!requiresOnboarding(me)) {
       router.replace("/");
     }
-  }, [accessToken, authLoading, me?.onboarding_required, profileLoading, router, user]);
+  }, [accessToken, authLoading, me, profileLoading, router, user]);
 
-  const stepProgress = useMemo(() => (step / STEP_TITLES.length) * 100, [step]);
+  const stepTitles = useMemo(() => {
+    const verifyStepTitle =
+      challenge?.verification_mode === "strict" ? "Submit Solution" : "Verify Profile";
+    return ["Welcome", "LeetCode ID", verifyStepTitle, "Complete"] as const;
+  }, [challenge?.verification_mode]);
+
+  const stepProgress = useMemo(() => (step / stepTitles.length) * 100, [step, stepTitles.length]);
 
   async function handleStartOnboarding() {
     if (!accessToken) return;
@@ -68,6 +70,7 @@ export default function GettingStartedPage() {
         accessToken,
       );
       setChallenge(response);
+      setConfirmOwnership(false);
       setStep(3);
       await refreshMe();
     } catch (err) {
@@ -83,7 +86,12 @@ export default function GettingStartedPage() {
     setVerifying(true);
     setError(null);
     try {
-      await verifyOnboarding(accessToken);
+      await verifyOnboarding(
+        accessToken,
+        challenge.verification_mode === "soft"
+          ? { confirm_ownership: confirmOwnership }
+          : undefined,
+      );
       await refreshMe();
       setStep(4);
     } catch (err) {
@@ -145,17 +153,17 @@ export default function GettingStartedPage() {
           Let&apos;s get your account race-ready
         </h1>
         <p className="mt-2 text-sm text-slate-300">
-          You&apos;ll verify your LeetCode identity once. After verification, this ID cannot be changed
-          from the app.
+          Enter your correct LeetCode ID and verify it once. This ID cannot be changed from the app
+          after verification.
         </p>
       </header>
 
       <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-5">
         <div className="mb-3 flex items-center justify-between text-xs text-slate-300">
           <span>
-            Step {step} / {STEP_TITLES.length}
+            Step {step} / {stepTitles.length}
           </span>
-          <span>{STEP_TITLES[step - 1]}</span>
+          <span>{stepTitles[step - 1]}</span>
         </div>
         <div className="h-2 w-full rounded-full bg-slate-800">
           <div
@@ -164,7 +172,7 @@ export default function GettingStartedPage() {
           />
         </div>
         <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
-          {STEP_TITLES.map((label, idx) => (
+          {stepTitles.map((label, idx) => (
             <div
               key={label}
               className={`rounded-lg px-2 py-1 ${
@@ -189,7 +197,7 @@ export default function GettingStartedPage() {
         <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
           <h2 className="text-xl font-semibold text-slate-100">Welcome to LeetRace</h2>
           <p className="mt-2 text-sm text-slate-300">
-            Before joining rooms, verify your LeetCode identity through a quick one-time challenge.
+            Before joining rooms, complete a quick one-time LeetCode identity setup.
           </p>
           <button
             type="button"
@@ -205,7 +213,7 @@ export default function GettingStartedPage() {
         <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
           <h2 className="text-xl font-semibold text-slate-100">Enter your LeetCode ID</h2>
           <p className="mt-2 text-sm text-slate-300">
-            This username must be valid and cannot be changed after verification.
+            Enter the correct username. It cannot be changed after verification.
           </p>
 
           <label className="mt-4 block text-sm text-slate-200">
@@ -241,28 +249,89 @@ export default function GettingStartedPage() {
 
       {step === 3 && challenge ? (
         <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
-          <h2 className="text-xl font-semibold text-slate-100">Submit and verify</h2>
+          <h2 className="text-xl font-semibold text-slate-100">
+            {challenge.verification_mode === "soft" ? "Preview and confirm" : "Submit and verify"}
+          </h2>
           <p className="mt-2 text-sm text-slate-300">{challenge.instructions}</p>
-          <p className="mt-2 text-xs text-cyan-200">
-            Challenge window: {new Date(challenge.issued_at).toLocaleString()} to{" "}
-            {new Date(challenge.expires_at).toLocaleString()}
-          </p>
 
-          <a
-            href={`https://leetcode.com/problems/${challenge.problem_slug}/`}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex rounded-lg border border-cyan-300/40 px-3 py-2 text-sm text-cyan-200 transition hover:bg-cyan-500/10"
-          >
-            Open {challenge.problem_title} on LeetCode
-          </a>
+          {challenge.verification_mode === "soft" ? (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-xl border border-slate-700/60 bg-slate-950/70 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-400">LeetCode Profile Preview</p>
+                <div className="mt-3 flex items-center gap-3">
+                  {challenge.profile_preview_avatar_url ? (
+                    <Image
+                      src={challenge.profile_preview_avatar_url}
+                      alt={challenge.profile_preview_username}
+                      width={40}
+                      height={40}
+                      className="h-10 w-10 rounded-full border border-slate-600/60 object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-600/60 bg-slate-800 text-xs text-slate-300">
+                      LC
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-mono text-sm text-slate-100">
+                      @{challenge.profile_preview_username}
+                    </p>
+                    {challenge.profile_preview_url ? (
+                      <a
+                        href={challenge.profile_preview_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-cyan-200 hover:underline"
+                      >
+                        Open profile
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
 
-          <div className="mt-4 rounded-xl border border-slate-700/60 bg-slate-950/70 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Reference Solution (Python)</p>
-            <pre className="mt-2 overflow-x-auto text-xs text-slate-200">
-              <code>{challenge.reference_code}</code>
-            </pre>
-          </div>
+              <label className="flex items-start gap-3 rounded-lg border border-slate-700/60 bg-slate-950/50 px-3 py-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={confirmOwnership}
+                  onChange={(e) => setConfirmOwnership(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
+                />
+                <span>I confirm this is my LeetCode profile and I want to lock it.</span>
+              </label>
+            </div>
+          ) : (
+            <>
+              {challenge.issued_at && challenge.expires_at ? (
+                <p className="mt-2 text-xs text-cyan-200">
+                  Challenge window: {new Date(challenge.issued_at).toLocaleString()} to{" "}
+                  {new Date(challenge.expires_at).toLocaleString()}
+                </p>
+              ) : null}
+
+              {challenge.problem_slug && challenge.problem_title ? (
+                <a
+                  href={`https://leetcode.com/problems/${challenge.problem_slug}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex rounded-lg border border-cyan-300/40 px-3 py-2 text-sm text-cyan-200 transition hover:bg-cyan-500/10"
+                >
+                  Open {challenge.problem_title} on LeetCode
+                </a>
+              ) : null}
+
+              {challenge.reference_code ? (
+                <div className="mt-4 rounded-xl border border-slate-700/60 bg-slate-950/70 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Reference Solution (Python)
+                  </p>
+                  <pre className="mt-2 overflow-x-auto text-xs text-slate-200">
+                    <code>{challenge.reference_code}</code>
+                  </pre>
+                </div>
+              ) : null}
+            </>
+          )}
 
           <div className="mt-5 flex gap-3">
             <button
@@ -274,7 +343,7 @@ export default function GettingStartedPage() {
             </button>
             <button
               type="button"
-              disabled={verifying}
+              disabled={verifying || (challenge.verification_mode === "soft" && !confirmOwnership)}
               onClick={() => void handleVerify()}
               className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
             >

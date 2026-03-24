@@ -10,6 +10,7 @@ import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
 import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
+import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
 import type { ProblemSource, RoomStateResponse } from "@/lib/types";
@@ -63,7 +64,7 @@ export default function LobbyPage() {
   useEffect(() => {
     if (authLoading || profileLoading) return;
     if (!user || !me) return;
-    if (me.onboarding_required) {
+    if (requiresOnboarding(me)) {
       router.replace("/getting-started");
     }
   }, [authLoading, me, profileLoading, router, user]);

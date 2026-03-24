@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 
 import { AvatarBadge } from "@/components/avatar-badge";
 import { useAuth } from "@/components/auth-provider";
+import { requiresOnboarding } from "@/lib/onboarding";
 
 export function TopNav() {
   const pathname = usePathname();
@@ -68,7 +69,7 @@ export function TopNav() {
           >
             Dashboard
           </Link>
-          {user && me?.onboarding_required ? (
+          {user && requiresOnboarding(me) ? (
             <Link
               href="/getting-started"
               className={`rounded-lg px-2 py-1 text-sm transition ${

@@ -108,8 +108,8 @@ Run these checks in order:
 - Sign in with Google.
 - Complete Getting Started onboarding:
   - enter LeetCode username
-  - submit accepted solution for Fizz Buzz
-  - click Verify
+  - if `LEETCODE_VERIFICATION_MODE=soft`: confirm profile + click Verify
+  - if `LEETCODE_VERIFICATION_MODE=strict`: submit accepted Fizz Buzz + click Verify
 - Create room from frontend.
 - Join from second browser/incognito.
 - Wait for scheduled auto-start (or set near-future time in test).

@@ -77,6 +77,7 @@ Frontend app: `http://localhost:3000`
 - `SUPABASE_JWKS_URL` (optional if derivable from `SUPABASE_URL`)
 - `SUPABASE_JWT_AUDIENCE` (default `authenticated`)
 - `SUPABASE_JWT_ISSUER` (optional if derivable from `SUPABASE_URL`)
+- `LEETCODE_VERIFICATION_MODE` (`soft` default, set `strict` for challenge-based verification)
 - `SYNC_INTERVAL_SECONDS`
 - `MAX_PARTICIPANTS_PER_ROOM`
 
@@ -92,7 +93,10 @@ Frontend app: `http://localhost:3000`
 - Supabase Auth: set `Site URL` to `https://leet-hard.vercel.app`.
 - Supabase Auth redirect allow-list: add `http://localhost:3000`, `https://leet-hard.vercel.app`, and preview URLs if used.
 - Run DB migrations before serving traffic: `alembic upgrade head`.
-- After Google OAuth, users complete Getting Started (Fizz Buzz accepted submission check) before create/join.
+- After Google OAuth, users complete Getting Started before create/join.
+- Verification mode is controlled by `LEETCODE_VERIFICATION_MODE`:
+  - `soft`: username existence check + user confirmation
+  - `strict`: Fizz Buzz accepted submission challenge
 
 Detailed step-by-step production guide:
 - [DEPLOYMENT.md](/home/shashank-sahu/Documents/leet_hard/DEPLOYMENT.md)

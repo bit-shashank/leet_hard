@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     supabase_jwks_url: str = ''
     supabase_jwt_audience: str = 'authenticated'
     supabase_jwt_issuer: str = ''
+    leetcode_verification_mode: str = 'soft'
 
     sync_interval_seconds: int = 15
     avatar_sync_ttl_seconds: int = 21600

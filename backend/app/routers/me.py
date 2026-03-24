@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import auth
 from app.db import get_db
+from app.config import get_settings
 from app.models import (
     LeetCodeVerificationChallenge,
     Participant,
@@ -21,6 +22,7 @@ from app.schemas import (
     MeResponse,
     OnboardingStartRequest,
     OnboardingStartResponse,
+    OnboardingVerifyRequest,
     OnboardingVerifyResponse,
     UpdateMeRequest,
 )
@@ -34,6 +36,10 @@ ONBOARDING_PROBLEM_TITLE = 'Fizz Buzz'
 ONBOARDING_WINDOW_MINUTES = 30
 ONBOARDING_INSTRUCTIONS = (
     'Open Fizz Buzz on LeetCode, submit an Accepted solution, then click Verify below. '
+    'Your LeetCode username will be locked after verification.'
+)
+SOFT_ONBOARDING_INSTRUCTIONS = (
+    'Confirm this is your LeetCode profile to finish setup. '
     'Your LeetCode username will be locked after verification.'
 )
 ONBOARDING_REFERENCE_CODE = """class Solution:
@@ -188,6 +194,10 @@ def _room_rank_map(db: Session, room_id: str) -> dict[str, int]:
 
 def _build_onboarding_response(challenge: LeetCodeVerificationChallenge) -> OnboardingStartResponse:
     return OnboardingStartResponse(
+        verification_mode='strict',
+        profile_preview_username=challenge.leetcode_username,
+        profile_preview_avatar_url=None,
+        profile_preview_url=f'https://leetcode.com/u/{challenge.leetcode_username}/',
         problem_slug=challenge.problem_slug,
         problem_title=challenge.problem_title,
         instructions=ONBOARDING_INSTRUCTIONS,
@@ -195,6 +205,13 @@ def _build_onboarding_response(challenge: LeetCodeVerificationChallenge) -> Onbo
         issued_at=challenge.issued_at,
         expires_at=challenge.expires_at,
     )
+
+
+def _verification_mode() -> str:
+    mode = get_settings().leetcode_verification_mode.strip().lower()
+    if mode not in {'soft', 'strict'}:
+        return 'soft'
+    return mode
 
 
 @router.get('', response_model=MeResponse)
@@ -281,6 +298,8 @@ def start_onboarding(
 
     profile_payload = _assert_valid_leetcode_username(normalized)
 
+    mode = _verification_mode()
+
     now = _utcnow()
     active_challenges = db.scalars(
         select(LeetCodeVerificationChallenge)
@@ -294,12 +313,13 @@ def start_onboarding(
     reusable: LeetCodeVerificationChallenge | None = None
     for challenge in active_challenges:
         expires_at = _coerce_utc(challenge.expires_at)
-        if (
+        can_reuse = mode == 'strict' and (
             reusable is None
             and expires_at is not None
             and expires_at > now
             and challenge.leetcode_username == normalized
-        ):
+        )
+        if can_reuse:
             reusable = challenge
             continue
         challenge.status = VerificationChallengeStatus.EXPIRED
@@ -322,7 +342,7 @@ def start_onboarding(
         current_user.leetcode_username_locked = False
         dirty = True
 
-    if reusable is None:
+    if mode == 'strict' and reusable is None:
         reusable = LeetCodeVerificationChallenge(
             user_id=current_user.id,
             leetcode_username=normalized,
@@ -339,16 +359,63 @@ def start_onboarding(
     if dirty:
         db.commit()
         db.refresh(current_user)
-        db.refresh(reusable)
+        if reusable is not None:
+            db.refresh(reusable)
 
-    return _build_onboarding_response(reusable)
+    if mode == 'soft':
+        return OnboardingStartResponse(
+            verification_mode='soft',
+            profile_preview_username=normalized,
+            profile_preview_avatar_url=current_user.avatar_url,
+            profile_preview_url=f'https://leetcode.com/u/{normalized}/',
+            instructions=SOFT_ONBOARDING_INSTRUCTIONS,
+        )
+
+    if reusable is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Unable to initialize strict verification challenge.',
+        )
+
+    strict_response = _build_onboarding_response(reusable)
+    strict_response.profile_preview_avatar_url = current_user.avatar_url
+    return strict_response
 
 
 @router.post('/onboarding/verify', response_model=OnboardingVerifyResponse)
 def verify_onboarding(
+    payload: OnboardingVerifyRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    mode = _verification_mode()
+    now = _utcnow()
+    username = auth.normalize_leetcode_username(current_user.primary_leetcode_username or '')
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Primary LeetCode username is missing. Start onboarding first.',
+        )
+
+    if mode == 'soft':
+        if not payload.confirm_ownership:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Please confirm this is your LeetCode profile before verifying.',
+            )
+        _assert_valid_leetcode_username(username)
+        current_user.primary_leetcode_username = username
+        current_user.leetcode_verified_at = now
+        current_user.leetcode_username_locked = True
+        current_user.onboarding_completed_at = now
+        db.commit()
+        db.refresh(current_user)
+        return OnboardingVerifyResponse(
+            verified=True,
+            verified_at=now,
+            me=_to_me_response(current_user),
+        )
+
     challenge = db.scalar(
         select(LeetCodeVerificationChallenge)
         .where(
@@ -363,7 +430,6 @@ def verify_onboarding(
             detail='No active onboarding challenge. Start onboarding first.',
         )
 
-    now = _utcnow()
     expires_at = _coerce_utc(challenge.expires_at)
     if expires_at is None or expires_at <= now:
         challenge.status = VerificationChallengeStatus.EXPIRED
@@ -373,7 +439,6 @@ def verify_onboarding(
             detail='Your onboarding challenge expired. Start onboarding again.',
         )
 
-    username = auth.normalize_leetcode_username(current_user.primary_leetcode_username or '')
     if not username or username != challenge.leetcode_username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

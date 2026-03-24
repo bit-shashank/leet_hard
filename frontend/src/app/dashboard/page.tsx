@@ -8,6 +8,7 @@ import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { ApiError, getDashboard, updateMe } from "@/lib/api";
 import { prettyDateTime } from "@/lib/format";
+import { requiresOnboarding } from "@/lib/onboarding";
 import type { DashboardResponse } from "@/lib/types";
 
 function parseApiError(error: unknown) {
@@ -42,7 +43,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (authLoading) return;
     if (!user || !me) return;
-    if (me.onboarding_required) {
+    if (requiresOnboarding(me)) {
       router.replace("/getting-started");
     }
   }, [authLoading, me, router, user]);

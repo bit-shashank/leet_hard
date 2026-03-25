@@ -217,8 +217,13 @@ export default function RoomHistoryPage() {
         </div>
       ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <SectionCard title="Final Leaderboard" subtitle="Saved for future reference.">
+      <section className="grid gap-6 lg:h-[36rem] lg:grid-cols-[1.05fr_0.95fr]">
+        <SectionCard
+          title="Final Leaderboard"
+          subtitle="Saved for future reference."
+          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col"
+          contentClassName="site-scrollbar lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
+        >
           <table className="table-grid">
             <thead>
               <tr>
@@ -250,8 +255,13 @@ export default function RoomHistoryPage() {
           </table>
         </SectionCard>
 
-        <SectionCard title="Solve Timeline" subtitle="All auto/manual solve events in chronological order.">
-          <div className="space-y-3">
+        <SectionCard
+          title="Solve Timeline"
+          subtitle="All auto/manual solve events in chronological order."
+          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col"
+          contentClassName="lg:min-h-0 lg:flex-1"
+        >
+          <div className="site-scrollbar space-y-3 lg:h-full lg:overflow-y-auto lg:pr-1">
             {history?.events.length ? (
               history.events.map((event, idx) => (
                 <div
@@ -275,6 +285,40 @@ export default function RoomHistoryPage() {
           </div>
         </SectionCard>
       </section>
+
+      <SectionCard title="Problem Set" subtitle="Questions assigned in this completed room.">
+        <div className="space-y-3">
+          {history?.problems.length ? (
+            history.problems.map((problem, index) => (
+              <article
+                key={`${problem.title_slug}-${problem.sort_order}`}
+                className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-cyan-200">
+                      #{problem.sort_order || index + 1} · {problem.difficulty}
+                    </p>
+                    <h3 className="text-lg font-semibold text-slate-100">{problem.title}</h3>
+                    <p className="mt-1 font-mono text-xs text-slate-400">{problem.title_slug}</p>
+                  </div>
+
+                  <a
+                    href={problem.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-200 transition hover:bg-cyan-500/10"
+                  >
+                    Open Problem
+                  </a>
+                </div>
+              </article>
+            ))
+          ) : (
+            <p className="text-sm text-slate-300">No problems were recorded for this room.</p>
+          )}
+        </div>
+      </SectionCard>
     </main>
   );
 }

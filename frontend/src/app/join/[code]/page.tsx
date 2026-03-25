@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { InlineSpinner, PageLoader, SkeletonBlock } from "@/components/loading";
-import { ApiError, getRoomState } from "@/lib/api";
+import { ApiError, getRoomState, joinRoom } from "@/lib/api";
 import { requiresOnboarding } from "@/lib/onboarding";
 import {
   savePendingJoinError,
@@ -68,12 +68,27 @@ export default function JoinResolverPage() {
           return;
         }
 
+        if (!state.room.has_passcode) {
+          const joined = await joinRoom(roomCode, {}, accessToken);
+          if (joined.room.status === "active") {
+            router.replace(`/room/${roomCode}`);
+            return;
+          }
+          if (joined.room.status === "ended") {
+            router.replace(`/room/${roomCode}/history`);
+            return;
+          }
+          router.replace(`/room/${roomCode}/lobby`);
+          return;
+        }
+
         savePendingJoinRoomCode(roomCode);
         router.replace("/");
       } catch (error) {
         if (error instanceof ApiError) {
           if (error.status === 404) {
             savePendingJoinError(`Room ${roomCode} was not found.`);
+            savePendingJoinRoomCode(roomCode);
           } else {
             savePendingJoinError(error.message);
             savePendingJoinRoomCode(roomCode);

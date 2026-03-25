@@ -160,6 +160,7 @@ export default function HomePage() {
   const [discoverRooms, setDiscoverRooms] = useState<DiscoverRoomResponse[]>([]);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [copiedRoomCode, setCopiedRoomCode] = useState<string | null>(null);
+  const [joiningRoomCode, setJoiningRoomCode] = useState<string | null>(null);
 
   const joinSectionRef = useRef<HTMLElement | null>(null);
   const totalProblems = useMemo(
@@ -375,8 +376,10 @@ export default function HomePage() {
   }
 
   async function handleRoomCardJoin(room: DiscoverRoomResponse, alreadyJoined: boolean) {
+    const normalizedCode = room.room_code.toUpperCase();
     if (alreadyJoined && user) return;
     if (!room.joinable && user) return;
+    if (joiningRoomCode === normalizedCode) return;
 
     if (!user || !accessToken) {
       await triggerSignIn(room.room_code);
@@ -389,9 +392,40 @@ export default function HomePage() {
       return;
     }
 
-    setRoomCode(room.room_code);
-    setResumeNotice(`Room ${room.room_code} selected. Complete join details below.`);
-    joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (room.has_passcode) {
+      setRoomCode(room.room_code);
+      setResumeNotice(`Room ${room.room_code} selected. Complete join details below.`);
+      joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    setJoiningRoomCode(normalizedCode);
+    setError(null);
+    try {
+      const response = await joinRoom(normalizedCode, {}, accessToken);
+      await fetchDashboardData();
+      if (response.room.status === "active") {
+        router.push(`/room/${response.room.room_code}`);
+        return;
+      }
+      if (response.room.status === "ended") {
+        router.push(`/room/${response.room.room_code}/history`);
+        return;
+      }
+      router.push(`/room/${response.room.room_code}/lobby`);
+    } catch (err) {
+      if (requiresGettingStarted(err)) {
+        savePendingJoinRoomCode(normalizedCode);
+        router.push("/getting-started");
+        return;
+      }
+      setRoomCode(normalizedCode);
+      setError(parseApiError(err));
+      setResumeNotice(`Room ${normalizedCode} selected. Complete join details below.`);
+      joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } finally {
+      setJoiningRoomCode(null);
+    }
   }
 
   async function handleShareDiscoverRoom(room: DiscoverRoomResponse) {
@@ -560,7 +594,8 @@ export default function HomePage() {
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {discoverRooms.map((room) => {
               const alreadyJoined = user ? recentRoomCodeSet.has(room.room_code.toUpperCase()) : false;
-              const joinDisabled = user ? (!room.joinable || alreadyJoined) : false;
+              const isJoiningThisRoom = joiningRoomCode === room.room_code.toUpperCase();
+              const joinDisabled = user ? (!room.joinable || alreadyJoined || isJoiningThisRoom) : false;
               return (
                 <article
                   key={room.room_code}
@@ -630,7 +665,7 @@ export default function HomePage() {
                       onClick={() => void handleRoomCardJoin(room, alreadyJoined)}
                       className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {!user ? "Sign in to Join" : alreadyJoined ? "Joined" : "Join"}
+                      {!user ? "Sign in to Join" : alreadyJoined ? "Joined" : isJoiningThisRoom ? "Joining..." : "Join"}
                     </button>
                   </div>
                 </article>

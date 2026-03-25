@@ -605,6 +605,12 @@ def _maybe_auto_start_room(db: Session, room: Room) -> bool:
     if room.status != RoomStatus.LOBBY:
         return False
 
+    # Refresh with a row lock (where supported) so concurrent requests can't
+    # activate the same room multiple times from stale in-memory state.
+    db.refresh(room, with_for_update=True)
+    if room.status != RoomStatus.LOBBY:
+        return False
+
     scheduled_start_at = _coerce_utc(room.scheduled_start_at)
     now = _utcnow()
     if scheduled_start_at is None or scheduled_start_at > now:

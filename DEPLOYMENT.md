@@ -61,6 +61,7 @@ SUPABASE_JWKS_URL=https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.jso
 SUPABASE_JWT_AUDIENCE=authenticated
 SUPABASE_JWT_ISSUER=https://<PROJECT_REF>.supabase.co/auth/v1
 SYNC_INTERVAL_SECONDS=15
+AUTO_SOLVE_SYNC_ENABLED=false
 AVATAR_SYNC_TTL_SECONDS=21600
 MAX_PARTICIPANTS_PER_ROOM=50
 PYTHON_VERSION=3.12.3
@@ -113,7 +114,8 @@ Run these checks in order:
 - Create room from frontend.
 - Join from second browser/incognito.
 - Wait for scheduled auto-start (or set near-future time in test).
-- Confirm leaderboard updates.
+- Mark/unmark a problem manually and confirm leaderboard updates.
+- Optional: if `AUTO_SOLVE_SYNC_ENABLED=true`, confirm auto-detection updates too.
 
 ## 5) Common Issues and Fixes
 

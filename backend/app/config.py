@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     leetcode_verification_mode: str = 'soft'
 
     sync_interval_seconds: int = 15
+    auto_solve_sync_enabled: bool = False
     avatar_sync_ttl_seconds: int = 21600
     max_participants_per_room: int = 50
 

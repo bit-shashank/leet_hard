@@ -13,7 +13,7 @@ Full-stack implementation of LeetRace, a competitive LeetCode room platform:
 - Optional room passcode
 - Auto-started challenge at scheduled time
 - Live leaderboard (5s polling)
-- Auto solve sync from unofficial LeetCode API + manual fallback toggles
+- Manual-first solve toggles (optional auto solve sync via feature flag)
 - Persistent room history + solve timeline
 - User dashboard with core performance metrics and recent rooms
 
@@ -78,7 +78,8 @@ Frontend app: `http://localhost:3000`
 - `SUPABASE_JWT_AUDIENCE` (default `authenticated`)
 - `SUPABASE_JWT_ISSUER` (optional if derivable from `SUPABASE_URL`)
 - `LEETCODE_VERIFICATION_MODE` (`soft` default, set `strict` for challenge-based verification)
-- `SYNC_INTERVAL_SECONDS`
+- `SYNC_INTERVAL_SECONDS` (used only when auto solve sync is enabled)
+- `AUTO_SOLVE_SYNC_ENABLED` (`false` default for manual-only tracking)
 - `MAX_PARTICIPANTS_PER_ROOM`
 
 ### Frontend (`frontend/.env.local`)

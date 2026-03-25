@@ -463,6 +463,10 @@ def _get_strict_verified_solve_time(room: Room, participant: Participant, proble
 
 
 def _sync_room_solves(db: Session, room: Room) -> None:
+    settings = get_settings()
+    if not settings.auto_solve_sync_enabled:
+        return
+
     if room.status != RoomStatus.ACTIVE:
         return
 
@@ -1065,16 +1069,17 @@ def get_room_state(
 
     if room.status == RoomStatus.ACTIVE:
         settings = get_settings()
-        now = _utcnow()
-        last_synced_at = _coerce_utc(room.last_synced_at)
-        should_sync = (
-            last_synced_at is None
-            or (now - last_synced_at).total_seconds() >= settings.sync_interval_seconds
-        )
+        if settings.auto_solve_sync_enabled:
+            now = _utcnow()
+            last_synced_at = _coerce_utc(room.last_synced_at)
+            should_sync = (
+                last_synced_at is None
+                or (now - last_synced_at).total_seconds() >= settings.sync_interval_seconds
+            )
 
-        if should_sync:
-            _sync_room_solves(db, room)
-            dirty = True
+            if should_sync:
+                _sync_room_solves(db, room)
+                dirty = True
 
     if _update_room_status_if_expired(room):
         dirty = True
@@ -1122,6 +1127,7 @@ def toggle_manual_solve(
     )
 
     now = _utcnow()
+    settings = get_settings()
     solved_at = now
     if payload.solved and room.strict_check:
         solved_at = _get_strict_verified_solve_time(room, participant, payload.problem_slug)
@@ -1148,12 +1154,16 @@ def toggle_manual_solve(
                 )
             )
     else:
-        if existing and existing.source == SolveSource.AUTO:
+        if (
+            existing
+            and existing.source == SolveSource.AUTO
+            and settings.auto_solve_sync_enabled
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Cannot unmark an auto-detected solve',
             )
-        if existing and existing.source == SolveSource.MANUAL:
+        if existing and existing.source in (SolveSource.MANUAL, SolveSource.AUTO):
             db.delete(existing)
             db.add(
                 SolveEvent(

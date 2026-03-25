@@ -23,7 +23,6 @@ import {
 } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
-import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
 import type { DashboardResponse, DiscoverRoomResponse, ProblemSource } from "@/lib/types";
 
@@ -60,9 +59,79 @@ function roomStatusClass(status: DiscoverRoomResponse["status"] | "saved") {
 
 function roomTimingText(room: DiscoverRoomResponse) {
   if (room.status === "active") {
-    return `Started ${prettyDateTime(room.starts_at)}`;
+    if (!room.ends_at) return "Live now";
+    return `Live now · ends ${relativeTimeText(room.ends_at)}`;
   }
-  return `Starts ${prettyDateTime(room.scheduled_start_at)}`;
+  return `Starts ${relativeTimeText(room.scheduled_start_at)}`;
+}
+
+function relativeTimeText(value: string | null) {
+  if (!value) return "soon";
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return prettyDateTime(value);
+  const diffMs = target.getTime() - Date.now();
+  const absMinutes = Math.max(1, Math.round(Math.abs(diffMs) / 60000));
+  if (absMinutes < 60) {
+    return diffMs >= 0 ? `in ${absMinutes}m` : `${absMinutes}m ago`;
+  }
+  const absHours = Math.round(absMinutes / 60);
+  if (absHours < 24) {
+    return diffMs >= 0 ? `in ${absHours}h` : `${absHours}h ago`;
+  }
+  const absDays = Math.round(absHours / 24);
+  return diffMs >= 0 ? `in ${absDays}d` : `${absDays}d ago`;
+}
+
+function parseRoomCodeInput(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const plainCode = trimmed.toUpperCase();
+  if (/^[A-Z0-9]{4,12}$/.test(plainCode)) return plainCode;
+
+  const patternMatch = trimmed.match(/(?:join|room)\/([a-z0-9]+)/i);
+  if (patternMatch?.[1]) return patternMatch[1].toUpperCase();
+
+  try {
+    const parsed = new URL(trimmed);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const joinIndex = segments.findIndex((segment) => segment.toLowerCase() === "join");
+    if (joinIndex >= 0 && segments[joinIndex + 1]) {
+      return segments[joinIndex + 1].toUpperCase();
+    }
+    const roomIndex = segments.findIndex((segment) => segment.toLowerCase() === "room");
+    if (roomIndex >= 0 && segments[roomIndex + 1]) {
+      return segments[roomIndex + 1].toUpperCase();
+    }
+  } catch {
+    // no-op
+  }
+
+  return null;
+}
+
+function isPasscodeError(error: unknown) {
+  if (!(error instanceof ApiError)) return false;
+  return error.message.toLowerCase().includes("passcode");
+}
+
+function joinButtonLabel({
+  user,
+  alreadyJoined,
+  isJoining,
+  room,
+}: {
+  user: unknown;
+  alreadyJoined: boolean;
+  isJoining: boolean;
+  room: DiscoverRoomResponse;
+}) {
+  if (!user) return "Sign in";
+  if (alreadyJoined) return "Joined";
+  if (isJoining) return "Joining...";
+  if (room.status === "ended") return "Ended";
+  if (!room.joinable) return "Full";
+  return "Join";
 }
 
 function toLocalDateTimeValue(value: Date) {
@@ -141,7 +210,7 @@ export default function HomePage() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
-  const [signInLoading, setSignInLoading] = useState(false);
+  const [showJoinPasscode, setShowJoinPasscode] = useState(false);
 
   const [roomTitle, setRoomTitle] = useState("");
   const [problemSource, setProblemSource] = useState<ProblemSource>("random");
@@ -163,6 +232,7 @@ export default function HomePage() {
   const [joiningRoomCode, setJoiningRoomCode] = useState<string | null>(null);
 
   const joinSectionRef = useRef<HTMLElement | null>(null);
+  const createSectionRef = useRef<HTMLElement | null>(null);
   const totalProblems = useMemo(
     () => easyCount + mediumCount + hardCount,
     [easyCount, mediumCount, hardCount],
@@ -177,6 +247,24 @@ export default function HomePage() {
     () => new Map(discoverRooms.map((room) => [room.room_code.toUpperCase(), room])),
     [discoverRooms],
   );
+  const activeRoomCount = useMemo(
+    () => discoverRooms.filter((room) => room.status === "active").length,
+    [discoverRooms],
+  );
+  const startingSoonCount = useMemo(() => {
+    const now = Date.now();
+    const oneHourMs = 60 * 60 * 1000;
+    return discoverRooms.filter((room) => {
+      if (room.status !== "lobby") return false;
+      const startsAtMs = new Date(room.scheduled_start_at).getTime();
+      return Number.isFinite(startsAtMs) && startsAtMs >= now && startsAtMs - now <= oneHourMs;
+    }).length;
+  }, [discoverRooms]);
+  const liveParticipantCount = useMemo(
+    () => discoverRooms.reduce((count, room) => count + room.participant_count, 0),
+    [discoverRooms],
+  );
+  const showStatsBlock = discoverLoading || activeRoomCount + startingSoonCount + liveParticipantCount > 0;
 
   const onboardingRequired = requiresOnboarding(me);
 
@@ -251,6 +339,7 @@ export default function HomePage() {
     if (!pendingRoomCode) return;
 
     setRoomCode(pendingRoomCode);
+    setShowJoinPasscode(false);
     setResumeNotice(`Resumed join flow for room ${pendingRoomCode}.`);
     joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [accessToken, onboardingRequired, profileLoading, user]);
@@ -260,14 +349,62 @@ export default function HomePage() {
       savePendingJoinRoomCode(pendingRoomCode);
     }
 
-    setSignInLoading(true);
     setError(null);
     try {
       await signInWithGoogle();
     } catch {
       setError("Unable to start Google sign in. Please try again.");
-      setSignInLoading(false);
     }
+  }
+
+  function routeAfterJoin(roomCodeValue: string, status: "lobby" | "active" | "ended") {
+    if (status === "active") {
+      router.push(`/room/${roomCodeValue}`);
+      return;
+    }
+    if (status === "ended") {
+      router.push(`/room/${roomCodeValue}/history`);
+      return;
+    }
+    router.push(`/room/${roomCodeValue}/lobby`);
+  }
+
+  async function attemptDirectJoin(
+    normalizedCode: string,
+    opts?: { passcode?: string; onPasscodeRequired?: () => void },
+  ) {
+    if (!accessToken) return;
+    const payload = opts?.passcode ? { passcode: opts.passcode } : {};
+
+    try {
+      const response = await joinRoom(normalizedCode, payload, accessToken);
+      await fetchDashboardData();
+      routeAfterJoin(response.room.room_code, response.room.status);
+      return;
+    } catch (err) {
+      if (requiresGettingStarted(err)) {
+        savePendingJoinRoomCode(normalizedCode);
+        router.push("/getting-started");
+        return;
+      }
+      if (!opts?.passcode && isPasscodeError(err)) {
+        opts?.onPasscodeRequired?.();
+        return;
+      }
+      throw err;
+    }
+  }
+
+  async function handleCreateCta() {
+    if (!user || !accessToken) {
+      await triggerSignIn();
+      return;
+    }
+    if (onboardingRequired) {
+      router.push("/getting-started");
+      return;
+    }
+    createSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
@@ -331,10 +468,10 @@ export default function HomePage() {
 
   async function handleJoinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedCode = roomCode.trim().toUpperCase();
+    const normalizedCode = parseRoomCodeInput(roomCode);
 
     if (!normalizedCode) {
-      setError("Room code is required.");
+      setError("Enter a valid room code or invite link.");
       return;
     }
 
@@ -349,26 +486,29 @@ export default function HomePage() {
       return;
     }
 
+    setRoomCode(normalizedCode);
     setJoinLoading(true);
     setError(null);
 
     try {
-      const response = await joinRoom(
-        normalizedCode,
-        {
-          ...(joinPasscode.trim() ? { passcode: joinPasscode.trim() } : {}),
-        },
-        accessToken,
-      );
+      const knownRoom = discoverByCode.get(normalizedCode);
+      const trimmedPasscode = joinPasscode.trim();
 
-      await fetchDashboardData();
-      router.push(`/room/${response.room.room_code}/lobby`);
-    } catch (err) {
-      if (requiresGettingStarted(err)) {
-        savePendingJoinRoomCode(normalizedCode);
-        router.push("/getting-started");
+      if (knownRoom?.has_passcode && !trimmedPasscode) {
+        setShowJoinPasscode(true);
+        setResumeNotice(`Room ${normalizedCode} requires a passcode to join.`);
+        setError(null);
         return;
       }
+
+      await attemptDirectJoin(normalizedCode, {
+        ...(trimmedPasscode ? { passcode: trimmedPasscode } : {}),
+        onPasscodeRequired: () => {
+          setShowJoinPasscode(true);
+          setResumeNotice(`Room ${normalizedCode} requires a passcode to join.`);
+        },
+      });
+    } catch (err) {
       setError(parseApiError(err));
     } finally {
       setJoinLoading(false);
@@ -394,36 +534,33 @@ export default function HomePage() {
 
     if (room.has_passcode) {
       setRoomCode(room.room_code);
+      setShowJoinPasscode(true);
+      setJoinPasscode("");
       setResumeNotice(`Room ${room.room_code} selected. Complete join details below.`);
       joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
 
     setJoiningRoomCode(normalizedCode);
+    setJoinLoading(true);
     setError(null);
     try {
-      const response = await joinRoom(normalizedCode, {}, accessToken);
-      await fetchDashboardData();
-      if (response.room.status === "active") {
-        router.push(`/room/${response.room.room_code}`);
-        return;
-      }
-      if (response.room.status === "ended") {
-        router.push(`/room/${response.room.room_code}/history`);
-        return;
-      }
-      router.push(`/room/${response.room.room_code}/lobby`);
+      await attemptDirectJoin(normalizedCode, {
+        onPasscodeRequired: () => {
+          setRoomCode(normalizedCode);
+          setShowJoinPasscode(true);
+          setResumeNotice(`Room ${normalizedCode} now requires a passcode to join.`);
+          joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        },
+      });
     } catch (err) {
-      if (requiresGettingStarted(err)) {
-        savePendingJoinRoomCode(normalizedCode);
-        router.push("/getting-started");
-        return;
-      }
       setRoomCode(normalizedCode);
+      setShowJoinPasscode(true);
       setError(parseApiError(err));
       setResumeNotice(`Room ${normalizedCode} selected. Complete join details below.`);
       joinSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } finally {
+      setJoinLoading(false);
       setJoiningRoomCode(null);
     }
   }
@@ -452,16 +589,76 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 py-10 md:px-8">
-      <header className="mb-8 rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 shadow-lg shadow-cyan-950/20 backdrop-blur md:p-8">
+      <header
+        ref={joinSectionRef}
+        className="mb-6 rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 shadow-lg shadow-cyan-950/20 backdrop-blur md:p-8"
+      >
         <p className="mb-2 inline-flex rounded-full border border-cyan-300/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-cyan-200">
           LeetRace
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-slate-50 md:text-4xl">
-          Race coding rooms with friends, live leaderboards, and verified identities
+          Solve problems faster than your friends, live.
         </h1>
         <p className="mt-3 max-w-3xl text-sm text-slate-300 md:text-base">
-          Discover top rooms, join by code, and compete in scheduled LeetCode races.
+          Real-time coding races with live leaderboards. Join instantly with a room code or invite link.
         </p>
+
+        <form className="mt-6 space-y-4" onSubmit={handleJoinRoom}>
+          <label className="block text-sm text-slate-100">
+            Room Code or Invite Link
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+              <input
+                required
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value)}
+                className="w-full rounded-xl border border-emerald-200/40 bg-slate-950/75 px-3 py-2 text-slate-100 outline-none ring-emerald-300/70 transition focus:ring-2"
+                placeholder="ABC123 or https://your-domain.com/join/ABC123"
+              />
+              <button
+                type="submit"
+                disabled={joinLoading}
+                className="h-[42px] whitespace-nowrap rounded-xl bg-emerald-400 px-4 font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {joinLoading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <InlineSpinner className="h-4 w-4" label="Joining room" />
+                    Joining...
+                  </span>
+                ) : (
+                  "Join Room"
+                )}
+              </button>
+            </div>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowJoinPasscode((value) => !value)}
+            className="text-xs font-medium text-emerald-100 underline decoration-dotted underline-offset-4 transition hover:text-white"
+          >
+            {showJoinPasscode ? "Hide passcode field" : "Room has passcode? Add it"}
+          </button>
+          {showJoinPasscode ? (
+            <label className="block text-sm text-slate-100">
+              Passcode
+              <input
+                value={joinPasscode}
+                onChange={(e) => setJoinPasscode(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-emerald-200/40 bg-slate-950/75 px-3 py-2 text-slate-100 outline-none ring-emerald-300/70 transition focus:ring-2"
+                placeholder="Enter room passcode"
+              />
+            </label>
+          ) : null}
+        </form>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => void handleCreateCta()}
+            className="rounded-lg border border-cyan-300/60 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/10"
+          >
+            Create your own room
+          </button>
+        </div>
       </header>
 
       {error ? (
@@ -475,35 +672,146 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {!authLoading && !user ? (
-        <section className="mb-6 rounded-2xl border border-amber-300/30 bg-amber-500/10 p-6">
-          <h2 className="text-xl font-semibold text-amber-100">Browse freely, join after sign in</h2>
-          <p className="mt-2 text-sm text-amber-100/90">
-            Room discovery is public. Creating and joining rooms redirects to Google OAuth.
-          </p>
+      <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
+        <h2 className="text-xl font-semibold text-slate-100">How LeetRace Works</h2>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">1. Create</p>
+            <p className="mt-2 text-sm text-slate-200">Pick source, difficulty mix, and schedule.</p>
+          </article>
+          <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">2. Share</p>
+            <p className="mt-2 text-sm text-slate-200">Send one invite link in WhatsApp, Slack, or Discord.</p>
+          </article>
+          <article className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">3. Race</p>
+            <p className="mt-2 text-sm text-slate-200">Compete live with timer + leaderboard updates.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-100">Top Rooms</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Active first, then closest upcoming starts.
+            </p>
+          </div>
           <button
             type="button"
-            onClick={() => void triggerSignIn()}
-            disabled={signInLoading}
-            className="mt-4 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => void fetchDiscoverRooms()}
+            className="rounded-lg border border-slate-500/60 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
           >
-            {signInLoading ? (
-              <span className="inline-flex items-center gap-2">
-                <InlineSpinner className="h-3.5 w-3.5" label="Redirecting to Google sign-in" />
-                Redirecting...
-              </span>
-            ) : (
-              "Sign in with Google"
-            )}
+            Refresh
           </button>
-        </section>
-      ) : null}
+        </div>
+
+        {discoverLoading ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <DiscoverRoomSkeletonCard key={`discover-room-skeleton-${index}`} />
+            ))}
+          </div>
+        ) : discoverRooms.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {discoverRooms.map((room) => {
+              const alreadyJoined = user ? recentRoomCodeSet.has(room.room_code.toUpperCase()) : false;
+              const isJoiningThisRoom = joiningRoomCode === room.room_code.toUpperCase();
+              const joinDisabled = user
+                ? alreadyJoined || isJoiningThisRoom || room.status === "ended" || !room.joinable
+                : false;
+              const label = joinButtonLabel({
+                user,
+                alreadyJoined,
+                isJoining: isJoiningThisRoom,
+                room,
+              });
+              return (
+                <article
+                  key={room.room_code}
+                  className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-lg font-semibold tracking-tight text-slate-100">
+                        {room.room_title}
+                      </h3>
+                      <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
+                        {room.room_code}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
+                      >
+                        {room.status}
+                      </span>
+                      <ShareCopyButton
+                        copied={copiedRoomCode === room.room_code.toUpperCase()}
+                        onClick={() => void handleShareDiscoverRoom(room)}
+                        className="h-8 w-8"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      {roomTimingText(room)}
+                    </div>
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      {room.participant_count} participants
+                    </div>
+                    <div className="col-span-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                      Format: Easy {room.easy_count} • Medium {room.medium_count} • Hard {room.hard_count}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2 text-sm text-slate-200">
+                    <AvatarBadge
+                      name={room.host_leetcode_username || "Host"}
+                      avatarUrl={room.host_avatar_url}
+                      size="sm"
+                    />
+                    <div>
+                      <p className="font-medium text-slate-100">
+                        Host @{room.host_leetcode_username || "unknown"}
+                      </p>
+                      <p className="text-xs text-slate-400">{prettyDateTime(room.scheduled_start_at)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <span className="text-xs text-slate-400">
+                      {alreadyJoined
+                        ? "You already joined this room."
+                        : room.has_passcode
+                          ? "Passcode protected room."
+                          : "Open room, quick entry."}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={joinDisabled}
+                      onClick={() => void handleRoomCardJoin(room, alreadyJoined)}
+                      className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {label}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-300">No lobby or active rooms right now.</p>
+        )}
+      </section>
 
       {user && !onboardingRequired ? (
         <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold text-slate-100">Your Recent Rooms</h2>
+              <h2 className="text-xl font-semibold text-slate-100">Resume My Rooms</h2>
               <p className="mt-1 text-sm text-slate-300">
                 Quick-jump links from your authenticated room history.
               </p>
@@ -567,124 +875,20 @@ export default function HomePage() {
         </section>
       ) : null}
 
-      <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <section
+        ref={createSectionRef}
+        className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur"
+      >
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-semibold text-slate-100">Top Rooms</h2>
+            <h2 className="text-xl font-semibold text-slate-100">Create Room</h2>
             <p className="mt-1 text-sm text-slate-300">
-              Sorted by closest start time (lobby and active rooms).
+              Configure your race format, timer, and schedule. Then share one link and start competing.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void fetchDiscoverRooms()}
-            className="rounded-lg border border-slate-500/60 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
-          >
-            Refresh
-          </button>
         </div>
 
-        {discoverLoading ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, index) => (
-              <DiscoverRoomSkeletonCard key={`discover-room-skeleton-${index}`} />
-            ))}
-          </div>
-        ) : discoverRooms.length ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {discoverRooms.map((room) => {
-              const alreadyJoined = user ? recentRoomCodeSet.has(room.room_code.toUpperCase()) : false;
-              const isJoiningThisRoom = joiningRoomCode === room.room_code.toUpperCase();
-              const joinDisabled = user ? (!room.joinable || alreadyJoined || isJoiningThisRoom) : false;
-              return (
-                <article
-                  key={room.room_code}
-                  className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-semibold tracking-tight text-slate-100">
-                        {room.room_title}
-                      </h3>
-                      <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
-                        {room.room_code}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
-                      >
-                        {room.status}
-                      </span>
-                      <ShareCopyButton
-                        copied={copiedRoomCode === room.room_code.toUpperCase()}
-                        onClick={() => void handleShareDiscoverRoom(room)}
-                        className="h-8 w-8"
-                      />
-                    </div>
-                  </div>
-
-                  <p className="mt-2 text-xs text-slate-400">{roomTimingText(room)}</p>
-
-                  <div className="mt-3 flex items-center gap-2 text-sm text-slate-200">
-                    <AvatarBadge
-                      name={room.host_leetcode_username || "Host"}
-                      avatarUrl={room.host_avatar_url}
-                      size="sm"
-                    />
-                    <div>
-                      <p className="font-medium text-slate-100">
-                        @{room.host_leetcode_username || "unknown"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
-                      E {room.easy_count} · M {room.medium_count} · H {room.hard_count}
-                    </div>
-                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
-                      {room.participant_count} participants
-                    </div>
-                    <div className="col-span-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
-                      Source: {formatProblemSource(room.problem_source)}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    {alreadyJoined ? (
-                      <span className="text-xs text-emerald-300">Already joined</span>
-                    ) : (
-                      <span className="text-xs text-slate-400">
-                        {room.has_passcode ? "Passcode may be required" : "Open room"}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      disabled={joinDisabled}
-                      onClick={() => void handleRoomCardJoin(room, alreadyJoined)}
-                      className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {!user ? "Sign in to Join" : alreadyJoined ? "Joined" : isJoiningThisRoom ? "Joining..." : "Join"}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-300">No lobby or active rooms right now.</p>
-        )}
-      </section>
-
-      <section className="grid gap-6 lg:grid-cols-2">
-        <article className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
-          <h2 className="text-xl font-semibold text-slate-100">Create Room</h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Configure difficulty mix, set a timer, and launch your race.
-          </p>
-
-          <form className="mt-5 space-y-4" onSubmit={handleCreateRoom}>
+        <form className="space-y-4" onSubmit={handleCreateRoom}>
             <label className="block text-sm text-slate-200">
               Room Title
               <input
@@ -831,74 +1035,54 @@ export default function HomePage() {
               />
             </label>
 
-            <button
-              type="submit"
-              disabled={createLoading || !validTotal}
-              className="w-full rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {createLoading ? (
-                <span className="inline-flex items-center gap-2">
-                  <InlineSpinner className="h-4 w-4" label="Creating room" />
-                  Creating...
-                </span>
-              ) : !user ? (
-                "Sign in to Create"
-              ) : (
-                "Create & Enter Lobby"
-              )}
-            </button>
-          </form>
-        </article>
-
-        <article
-          ref={joinSectionRef}
-          className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur"
-        >
-          <h2 className="text-xl font-semibold text-slate-100">Join Room</h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Enter room code and jump straight into the room.
-          </p>
-
-          <form className="mt-5 space-y-4" onSubmit={handleJoinRoom}>
-            <label className="block text-sm text-slate-200">
-              Room Code
-              <input
-                required
-                value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 uppercase tracking-wider text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
-                placeholder="ABC123"
-              />
-            </label>
-
-            <label className="block text-sm text-slate-200">
-              Passcode (if required)
-              <input
-                value={joinPasscode}
-                onChange={(e) => setJoinPasscode(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
-              />
-            </label>
-
-            <button
-              type="submit"
-              disabled={joinLoading}
-              className="w-full rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {joinLoading ? (
-                <span className="inline-flex items-center gap-2">
-                  <InlineSpinner className="h-4 w-4" label="Joining room" />
-                  Joining...
-                </span>
-              ) : !user ? (
-                "Sign in to Join"
-              ) : (
-                "Join Room"
-              )}
-            </button>
-          </form>
-        </article>
+          <button
+            type="submit"
+            disabled={createLoading || !validTotal}
+            className="w-full rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {createLoading ? (
+              <span className="inline-flex items-center gap-2">
+                <InlineSpinner className="h-4 w-4" label="Creating room" />
+                Creating...
+              </span>
+            ) : !user ? (
+              "Sign in to Create"
+            ) : (
+              "Create & Enter Lobby"
+            )}
+          </button>
+        </form>
       </section>
+
+      {showStatsBlock ? (
+        <section className="mb-2 grid gap-3 md:grid-cols-3">
+          {discoverLoading ? (
+            <>
+              <SkeletonBlock className="h-20 rounded-xl" />
+              <SkeletonBlock className="h-20 rounded-xl" />
+              <SkeletonBlock className="h-20 rounded-xl" />
+            </>
+          ) : (
+            <>
+              <article className="rounded-xl border border-slate-700/60 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Live Competition</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-100">
+                  {liveParticipantCount} players competing now
+                </p>
+              </article>
+              <article className="rounded-xl border border-slate-700/60 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Rooms In Progress</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-100">{activeRoomCount} active rooms</p>
+              </article>
+              <article className="rounded-xl border border-slate-700/60 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Starting Soon</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-100">{startingSoonCount} races in 1 hour</p>
+              </article>
+            </>
+          )}
+        </section>
+      ) : null}
+
     </main>
   );
 }

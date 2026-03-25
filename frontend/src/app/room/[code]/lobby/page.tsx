@@ -269,8 +269,8 @@ export default function LobbyPage() {
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl space-y-6 px-4 py-8 md:px-8">
       <header className="rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
             <p className="text-sm uppercase tracking-wide text-cyan-200">Room Lobby</p>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-50">
               {state?.room.room_title}
@@ -279,17 +279,25 @@ export default function LobbyPage() {
               {roomCode}
             </p>
           </div>
-          <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-center">
-            <p className="text-xs uppercase tracking-wide text-cyan-200">Auto Starts In</p>
-            <p className="font-mono text-2xl font-semibold text-cyan-100">{scheduledCountdown}</p>
+          <div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-[220px] lg:items-center">
+            <div className="flex items-center gap-2 self-end lg:self-center">
+              <Link
+                href="/"
+                className="rounded-lg border border-slate-500/60 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
+              >
+                Back Home
+              </Link>
+              <ShareCopyButton
+                copied={shareCopied}
+                onClick={() => void handleShareRoom()}
+                className="h-10 w-10"
+              />
+            </div>
+            <div className="self-end rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-center lg:self-center">
+              <p className="text-xs uppercase tracking-wide text-cyan-200">Auto Starts In</p>
+              <p className="font-mono text-2xl font-semibold text-cyan-100">{scheduledCountdown}</p>
+            </div>
           </div>
-          <Link
-            href="/"
-            className="rounded-lg border border-slate-500/60 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
-          >
-            Back Home
-          </Link>
-          <ShareCopyButton copied={shareCopied} onClick={() => void handleShareRoom()} />
         </div>
         <p className="mt-2 text-xs text-cyan-200/90">Signed in as @{me?.primary_leetcode_username}</p>
       </header>

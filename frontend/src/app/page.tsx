@@ -859,18 +859,18 @@ export default function HomePage() {
               return (
                 <article
                   key={room.room_code}
-                  className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
+                  className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-3 sm:p-4"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-3">
                     <div className="min-w-0 flex-1">
-                      <h3 className="truncate text-lg font-semibold tracking-tight text-slate-100">
+                      <h3 className="truncate text-base font-semibold tracking-tight text-slate-100 sm:text-lg">
                         {room.room_title}
                       </h3>
-                      <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
+                      <p className="mt-1 truncate font-mono text-xs uppercase tracking-wide text-slate-400">
                         {room.room_code}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
                       <span
                         className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
                       >
@@ -891,7 +891,7 @@ export default function HomePage() {
                     <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
                       {room.participant_count} participants
                     </div>
-                    <div className="col-span-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5 break-words sm:col-span-2">
                       Format: Easy {room.easy_count} • Medium {room.medium_count} • Hard {room.hard_count}
                     </div>
                   </div>
@@ -902,16 +902,16 @@ export default function HomePage() {
                       avatarUrl={room.host_avatar_url}
                       size="sm"
                     />
-                    <div>
-                      <p className="font-medium text-slate-100">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-100">
                         Host @{room.host_leetcode_username || "unknown"}
                       </p>
-                      <p className="text-xs text-slate-400">{prettyDateTime(room.scheduled_start_at)}</p>
+                      <p className="truncate text-xs text-slate-400">{prettyDateTime(room.scheduled_start_at)}</p>
                     </div>
                   </div>
 
                   <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-slate-400 break-words sm:max-w-[70%]">
                       {alreadyJoined
                         ? "You already joined this room."
                         : room.has_passcode

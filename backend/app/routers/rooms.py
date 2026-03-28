@@ -92,7 +92,7 @@ def _normalize_topic_filters(raw_slugs: list[str]) -> list[str]:
         return []
 
     try:
-        catalog = {topic.slug for topic in get_topic_catalog()}
+        catalog = {topic.get('slug') for topic in get_topic_catalog() if topic.get('slug')}
     except LeetCodeServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -131,10 +131,10 @@ def _room_to_public(room: Room) -> RoomPublic:
         exclude_pre_solved=room.exclude_pre_solved,
         strict_check=room.strict_check,
         duration_minutes=room.duration_minutes,
-        scheduled_start_at=room.scheduled_start_at,
-        starts_at=room.starts_at,
-        ends_at=room.ends_at,
-        created_at=room.created_at,
+        scheduled_start_at=_coerce_utc(room.scheduled_start_at),
+        starts_at=_coerce_utc(room.starts_at),
+        ends_at=_coerce_utc(room.ends_at),
+        created_at=_coerce_utc(room.created_at),
         has_passcode=bool(room.passcode_hash),
         sync_warning=room.sync_warning,
         topic_slugs=room.topic_slugs or [],

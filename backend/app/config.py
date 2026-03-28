@@ -1,4 +1,5 @@
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List
@@ -6,7 +7,20 @@ from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-ENV_FILE = BASE_DIR / '.env'
+
+
+def _resolve_env_file() -> Path:
+    app_env = os.environ.get('APP_ENV', '').strip().lower()
+    if app_env in {'prod', 'production'}:
+        return BASE_DIR / '.env'
+
+    local_path = BASE_DIR / '.env.local'
+    if local_path.exists():
+        return local_path
+    return BASE_DIR / '.env'
+
+
+ENV_FILE = _resolve_env_file()
 
 
 class Settings(BaseSettings):

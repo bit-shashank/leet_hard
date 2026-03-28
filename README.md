@@ -30,10 +30,10 @@ Full-stack implementation of LeetRace, a competitive LeetCode room platform:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env
+cp backend/.env.example backend/.env.local
 ```
 
-Update `backend/.env` as needed (especially auth + database values).
+Update `backend/.env.local` as needed (especially auth + database values).
 
 Run API:
 ```bash
@@ -67,9 +67,10 @@ Frontend app: `http://localhost:3000`
 
 ## Key Environment Variables
 
-### Backend (`backend/.env`)
+### Backend (`backend/.env.local` for local, `backend/.env` or env vars for prod)
 - `DATABASE_URL`
-  Example: `postgresql+psycopg://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require`
+  Local example: `sqlite:///./leetcode_room_race.db`
+  Prod example: `postgresql+psycopg://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require`
 - `LEETCODE_API_BASE_URL`
 - `APP_TOKEN_SECRET`
 - `CORS_ORIGINS`
@@ -90,6 +91,7 @@ Frontend app: `http://localhost:3000`
 ## Deployment Notes
 - Vercel (frontend): set `NEXT_PUBLIC_API_BASE_URL` to Render backend URL.
 - Render (backend): set all backend env vars; point `DATABASE_URL` to Supabase Postgres.
+- Production processes should set `APP_ENV=prod` to force `.env` usage if local files exist in the repo.
 - Render Python version: use `3.12.3` (`PYTHON_VERSION=3.12.3`).
 - Supabase Auth: set `Site URL` to `https://leet-hard.vercel.app`.
 - Supabase Auth redirect allow-list: add `http://localhost:3000`, `https://leet-hard.vercel.app`, and preview URLs if used.

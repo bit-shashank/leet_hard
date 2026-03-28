@@ -38,6 +38,7 @@ from app.schemas import (
     RoomPublic,
     RoomStateResponse,
     StartRoomResponse,
+    TopicInfo,
     UpdateRoomSettingsRequest,
     UpdateRoomSettingsResponse,
 )
@@ -45,6 +46,8 @@ from app.services.leetcode import (
     LeetCodeServiceError,
     ProblemSelectionError,
     choose_random_problems_by_source,
+    get_topic_catalog,
+    normalize_topic_slug,
     get_recent_submissions,
     get_user_avatar_url,
 )
@@ -70,6 +73,40 @@ def _normalize_room_code(room_code: str) -> str:
 
 def _normalize_slug(slug: str) -> str:
     return slug.strip().strip('/').lower()
+
+
+def _normalize_topic_filters(raw_slugs: list[str]) -> list[str]:
+    if not raw_slugs:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_slugs:
+        slug = normalize_topic_slug(raw)
+        if not slug or slug in seen:
+            continue
+        normalized.append(slug)
+        seen.add(slug)
+
+    if not normalized:
+        return []
+
+    try:
+        catalog = {topic.slug for topic in get_topic_catalog()}
+    except LeetCodeServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'Topic catalog unavailable: {exc}',
+        ) from exc
+
+    invalid = [slug for slug in normalized if slug not in catalog]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Invalid topic slugs: {", ".join(sorted(invalid))}',
+        )
+
+    return normalized
 
 
 def _is_room_joinable(room: Room) -> bool:
@@ -100,6 +137,7 @@ def _room_to_public(room: Room) -> RoomPublic:
         created_at=room.created_at,
         has_passcode=bool(room.passcode_hash),
         sync_warning=room.sync_warning,
+        topic_slugs=room.topic_slugs or [],
     )
 
 
@@ -539,6 +577,7 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
     relaxed_exclusion = False
     if room.exclude_pre_solved:
         excluded_slugs, exclusion_fetch_errors = _collect_pre_solved_problem_slugs(db, room)
+    topic_slugs = set(room.topic_slugs or [])
 
     try:
         if room.exclude_pre_solved:
@@ -548,6 +587,7 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
                 medium_count=room.medium_count,
                 hard_count=room.hard_count,
                 excluded_slugs=excluded_slugs,
+                topic_slugs=topic_slugs,
             )
         else:
             selected = choose_random_problems_by_source(
@@ -555,6 +595,7 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
                 easy_count=room.easy_count,
                 medium_count=room.medium_count,
                 hard_count=room.hard_count,
+                topic_slugs=topic_slugs,
             )
     except ProblemSelectionError:
         if not room.exclude_pre_solved:
@@ -566,6 +607,7 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
             medium_count=room.medium_count,
             hard_count=room.hard_count,
             excluded_slugs=None,
+            topic_slugs=topic_slugs,
         )
 
     room.starts_at = now
@@ -812,6 +854,17 @@ def list_rooms(
     return [_room_to_public(room) for room in rooms]
 
 
+@router.get('/topics', response_model=list[TopicInfo])
+def list_room_topics():
+    try:
+        return get_topic_catalog()
+    except LeetCodeServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'Topic catalog unavailable: {exc}',
+        ) from exc
+
+
 @router.post('', response_model=CreateRoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(
     payload: CreateRoomRequest,
@@ -833,6 +886,8 @@ def create_room(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Room start time must be in the future',
         )
+
+    topic_slugs = _normalize_topic_filters(payload.settings.topic_slugs)
 
     room_code = None
     for _ in range(20):
@@ -865,6 +920,7 @@ def create_room(
         duration_minutes=payload.settings.duration_minutes,
         scheduled_start_at=scheduled_start_at,
         status=RoomStatus.LOBBY,
+        topic_slugs=topic_slugs,
     )
     db.add(room)
     db.flush()
@@ -1047,6 +1103,8 @@ def update_room_settings(
             detail='Scheduled start time has passed. Settings are locked.',
         )
 
+    topic_slugs = _normalize_topic_filters(payload.settings.topic_slugs)
+
     room_title = payload.room_title.strip()
     if not room_title:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid room title')
@@ -1072,6 +1130,7 @@ def update_room_settings(
     room.strict_check = payload.settings.strict_check
     room.duration_minutes = payload.settings.duration_minutes
     room.scheduled_start_at = scheduled_start_at
+    room.topic_slugs = topic_slugs
     if payload.settings.passcode is not None:
         room.passcode_hash = auth.hash_passcode(payload.settings.passcode)
 

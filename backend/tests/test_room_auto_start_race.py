@@ -34,7 +34,7 @@ def test_auto_start_is_idempotent_across_stale_sessions(monkeypatch):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem('two-sum', 'Easy', 1),
             _make_problem('add-two-numbers', 'Medium', 2),
             _make_problem('3sum', 'Medium', 3),

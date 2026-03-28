@@ -238,7 +238,7 @@ def test_discover_rooms_returns_lobby_and_active_with_host_data(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem('two-sum', 'Easy', 1),
             _make_problem('add-two-numbers', 'Medium', 2),
             _make_problem('merge-k-sorted-lists', 'Hard', 3),
@@ -304,7 +304,7 @@ def test_join_active_room_succeeds_join_ended_fails(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem('add-two-numbers', 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -343,7 +343,14 @@ def test_start_room_assigns_exact_difficulty_mix(client):
 
     captured: dict[str, int | str] = {}
 
-    def _select(source: ProblemSource, easy_count: int, medium_count: int, hard_count: int):
+    def _select(
+        source: ProblemSource,
+        easy_count: int,
+        medium_count: int,
+        hard_count: int,
+        topic_slugs=None,
+        **_,
+    ):
         captured['source'] = source.value
         captured['easy'] = easy_count
         captured['medium'] = medium_count
@@ -390,7 +397,7 @@ def test_late_join_window_ignores_submissions_before_participant_join(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -474,7 +481,14 @@ def test_start_room_uses_selected_problem_source(client):
 
     captured: dict[str, str] = {}
 
-    def _select(source: ProblemSource, easy_count: int, medium_count: int, hard_count: int):
+    def _select(
+        source: ProblemSource,
+        easy_count: int,
+        medium_count: int,
+        hard_count: int,
+        topic_slugs=None,
+        **_,
+    ):
         captured['source'] = source.value
         return [
             _make_problem('contains-duplicate', 'Easy', 1),
@@ -507,7 +521,7 @@ def test_start_room_sheet_source_insufficient_pool_returns_4xx(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: (_ for _ in ()).throw(
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: (_ for _ in ()).throw(
             ProblemSelectionError('Selected source "blind_75" has only 2 available non-paid problems')
         ),
     )
@@ -539,7 +553,7 @@ def test_manual_solve_strict_mode_succeeds_with_verified_submission(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -625,7 +639,7 @@ def test_manual_solve_strict_mode_fails_when_no_verified_submission(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -674,7 +688,7 @@ def test_manual_solve_strict_mode_fails_when_submission_outside_window(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -730,7 +744,7 @@ def test_manual_solve_strict_mode_fails_closed_on_submission_api_error(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),
@@ -771,7 +785,7 @@ def test_manual_solve_non_strict_mode_unchanged(client):
 
     monkeypatch.setattr(
         'app.routers.rooms.choose_random_problems_by_source',
-        lambda source, easy_count, medium_count, hard_count: [
+        lambda source, easy_count, medium_count, hard_count, excluded_slugs=None, topic_slugs=None: [
             _make_problem(target_slug, 'Medium', 1),
             _make_problem('3sum', 'Medium', 2),
             _make_problem('group-anagrams', 'Medium', 3),

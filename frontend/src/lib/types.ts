@@ -26,6 +26,7 @@ export type RoomPublic = {
   created_at: string;
   has_passcode: boolean;
   sync_warning: string | null;
+  topic_slugs: string[];
 };
 
 export type ParticipantPublic = {
@@ -78,6 +79,7 @@ export type CreateRoomRequest = {
     duration_minutes: number;
     start_at: string;
     passcode?: string;
+    topic_slugs?: string[];
   };
 };
 
@@ -128,6 +130,12 @@ export type DiscoverRoomResponse = {
   host_leetcode_username: string | null;
   host_avatar_url: string | null;
   joinable: boolean;
+};
+
+export type TopicInfo = {
+  slug: string;
+  name: string;
+  count: number;
 };
 
 export type UpdateRoomSettingsRequest = {

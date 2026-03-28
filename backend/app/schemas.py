@@ -17,6 +17,7 @@ class RoomSettingsInput(BaseModel):
     duration_minutes: int = Field(default=60, ge=15, le=180)
     start_at: datetime
     passcode: Optional[str] = Field(default=None, min_length=4, max_length=32)
+    topic_slugs: List[str] = Field(default_factory=list)
 
     @model_validator(mode='before')
     @classmethod
@@ -50,6 +51,25 @@ class RoomSettingsInput(BaseModel):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
+
+    @field_validator('topic_slugs', mode='before')
+    @classmethod
+    def normalize_topic_slugs(cls, value: Optional[object]) -> List[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError('topic_slugs must be a list')
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            if not isinstance(raw, str):
+                continue
+            cleaned = raw.strip().lower()
+            if not cleaned or cleaned in seen:
+                continue
+            normalized.append(cleaned)
+            seen.add(cleaned)
+        return normalized
 
 
 class CreateRoomRequest(BaseModel):
@@ -102,6 +122,7 @@ class RoomPublic(BaseModel):
     created_at: datetime
     has_passcode: bool
     sync_warning: Optional[str]
+    topic_slugs: List[str]
 
 
 class LeaderboardEntry(BaseModel):
@@ -131,6 +152,12 @@ class DiscoverRoomResponse(BaseModel):
     host_leetcode_username: Optional[str]
     host_avatar_url: Optional[str]
     joinable: bool
+
+
+class TopicInfo(BaseModel):
+    slug: str
+    name: str
+    count: int
 
 
 class RoomStateResponse(BaseModel):

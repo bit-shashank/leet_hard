@@ -9,11 +9,13 @@ import { AvatarBadge } from "@/components/avatar-badge";
 import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
 import { InlineSpinner, SkeletonBlock, SkeletonText } from "@/components/loading";
 import { ShareCopyButton } from "@/components/share-copy-button";
+import { TopicSelector } from "@/components/topic-selector";
 import {
   ApiError,
   createRoom,
   getDashboard,
   getDiscoverRooms,
+  getRoomTopics,
   joinRoom,
 } from "@/lib/api";
 import {
@@ -25,7 +27,7 @@ import {
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { copyRoomShareMessage } from "@/lib/share-room";
-import type { DashboardResponse, DiscoverRoomResponse, ProblemSource } from "@/lib/types";
+import type { DashboardResponse, DiscoverRoomResponse, ProblemSource, TopicInfo } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 const CONTINUE_ROOM_LIMIT = 4;
@@ -232,6 +234,10 @@ export default function HomePage() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [copiedRoomCode, setCopiedRoomCode] = useState<string | null>(null);
   const [joiningRoomCode, setJoiningRoomCode] = useState<string | null>(null);
+  const [topics, setTopics] = useState<TopicInfo[]>([]);
+  const [topicsLoading, setTopicsLoading] = useState(true);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
 
   const joinSectionRef = useRef<HTMLElement | null>(null);
   const createSectionRef = useRef<HTMLElement | null>(null);
@@ -375,6 +381,25 @@ export default function HomePage() {
     void fetchDashboardData();
   }, [fetchDashboardData]);
 
+  const loadTopics = useCallback(async () => {
+    setTopicsLoading(true);
+    try {
+      const response = await getRoomTopics();
+      setTopics(response);
+      setTopicsError(null);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Topics unavailable right now.";
+      setTopics([]);
+      setTopicsError(message);
+    } finally {
+      setTopicsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTopics();
+  }, [loadTopics]);
+
   useEffect(() => {
     if (!user || !accessToken || profileLoading || onboardingRequired) return;
 
@@ -491,6 +516,7 @@ export default function HomePage() {
             strict_check: strictCheck,
             duration_minutes: durationMinutes,
             start_at: parsedStartAt.toISOString(),
+            ...(selectedTopics.length ? { topic_slugs: selectedTopics } : {}),
             ...(createPasscode.trim() ? { passcode: createPasscode.trim() } : {}),
           },
         },
@@ -976,6 +1002,40 @@ export default function HomePage() {
                 <option value="striver_sde_sheet">Striver SDE Sheet</option>
               </select>
             </label>
+
+            <div className="space-y-2">
+              <p className="text-sm text-slate-200">Topics (optional)</p>
+              {topicsLoading ? (
+                <p className="text-xs text-slate-400">Loading topics...</p>
+              ) : topicsError ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                  <span>{topicsError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void loadTopics()}
+                    className="rounded-full border border-slate-600/70 px-2 py-0.5 text-[11px] text-slate-200 transition hover:bg-slate-800"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <TopicSelector
+                  topics={topics}
+                  selected={selectedTopics}
+                  onToggle={(slug) =>
+                    setSelectedTopics((prev) =>
+                      prev.includes(slug)
+                        ? prev.filter((entry) => entry !== slug)
+                        : [...prev, slug],
+                    )
+                  }
+                  showCounts={problemSource === "random"}
+                />
+              )}
+              <p className="text-xs text-slate-400">
+                Filters problems to any selected topic.
+              </p>
+            </div>
 
             <div className="grid grid-cols-3 gap-3">
               <label className="block text-sm text-slate-200">

@@ -12,6 +12,7 @@ import type {
   OnboardingVerifyRequest,
   OnboardingVerifyResponse,
   RoomStateResponse,
+  TopicInfo,
   UpdateMeRequest,
   UpdateRoomSettingsRequest,
   UpdateRoomSettingsResponse,
@@ -86,6 +87,10 @@ export function getDiscoverRooms(
   return request<DiscoverRoomResponse[]>(`/api/v1/rooms/discover?${query.toString()}`, {
     accessToken: opts?.accessToken,
   });
+}
+
+export function getRoomTopics() {
+  return request<TopicInfo[]>("/api/v1/rooms/topics");
 }
 
 export function joinRoom(roomCode: string, payload: JoinRoomRequest, accessToken: string) {

@@ -9,12 +9,12 @@ import { AvatarBadge } from "@/components/avatar-badge";
 import { PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { SectionCard } from "@/components/section-card";
 import { ShareCopyButton } from "@/components/share-copy-button";
-import { ApiError, getRoomHistory, getRoomState } from "@/lib/api";
+import { ApiError, getRoomHistory, getRoomState, getRoomTopics } from "@/lib/api";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
-import type { HistoryResponse } from "@/lib/types";
+import type { HistoryResponse, TopicInfo } from "@/lib/types";
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -59,6 +59,8 @@ export default function RoomHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [topics, setTopics] = useState<TopicInfo[]>([]);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading || profileLoading) return;
@@ -106,7 +108,38 @@ export default function RoomHistoryPage() {
     void loadHistory();
   }, [accessToken, roomCode, router]);
 
+  useEffect(() => {
+    let mounted = true;
+    async function loadTopics() {
+      try {
+        const response = await getRoomTopics();
+        if (!mounted) return;
+        setTopics(response);
+        setTopicsError(null);
+      } catch (err) {
+        if (!mounted) return;
+        const message = err instanceof ApiError ? err.message : "Topics unavailable right now.";
+        setTopics([]);
+        setTopicsError(message);
+      }
+    }
+
+    void loadTopics();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const winner = useMemo(() => history?.leaderboard[0] ?? null, [history?.leaderboard]);
+  const topicNameBySlug = useMemo(
+    () => new Map(topics.map((topic) => [topic.slug, topic.name])),
+    [topics],
+  );
+  const roomTopicNames = useMemo(
+    () =>
+      (history?.room.topic_slugs || []).map((slug) => topicNameBySlug.get(slug) || slug),
+    [history?.room.topic_slugs, topicNameBySlug],
+  );
 
   async function handleShareRoom() {
     if (!history?.room) return;
@@ -208,6 +241,13 @@ export default function RoomHistoryPage() {
           <p className="mt-1 text-xs text-emerald-200/90">
             Exclude pre-solved: {history?.room.exclude_pre_solved ? "On" : "Off"}
           </p>
+          {roomTopicNames.length ? (
+            <p className="mt-1 text-xs text-emerald-200/90">
+              Topics: {roomTopicNames.join(" • ")}
+            </p>
+          ) : topicsError ? (
+            <p className="mt-1 text-xs text-emerald-200/70">{topicsError}</p>
+          ) : null}
         </section>
       ) : null}
 

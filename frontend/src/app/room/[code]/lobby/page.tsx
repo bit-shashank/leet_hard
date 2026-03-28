@@ -10,13 +10,14 @@ import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
 import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
-import { ApiError, getRoomState, leaveRoom, updateRoomSettings } from "@/lib/api";
+import { TopicSelector } from "@/components/topic-selector";
+import { ApiError, getRoomState, getRoomTopics, leaveRoom, updateRoomSettings } from "@/lib/api";
 import { saveFlashNotice } from "@/lib/auth-intent";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
-import type { ProblemSource, RoomStateResponse } from "@/lib/types";
+import type { ProblemSource, RoomStateResponse, TopicInfo } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -77,6 +78,10 @@ export default function LobbyPage() {
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [formLoadedForRoom, setFormLoadedForRoom] = useState<string | null>(null);
+  const [topics, setTopics] = useState<TopicInfo[]>([]);
+  const [topicsLoading, setTopicsLoading] = useState(true);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
 
   const [roomTitle, setRoomTitle] = useState("");
   const [problemSource, setProblemSource] = useState<ProblemSource>("random");
@@ -139,6 +144,25 @@ export default function LobbyPage() {
     return () => clearInterval(timer);
   }, [accessToken, fetchState]);
 
+  const loadTopics = useCallback(async () => {
+    setTopicsLoading(true);
+    try {
+      const response = await getRoomTopics();
+      setTopics(response);
+      setTopicsError(null);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Topics unavailable right now.";
+      setTopics([]);
+      setTopicsError(message);
+    } finally {
+      setTopicsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTopics();
+  }, [loadTopics]);
+
   useEffect(() => {
     if (!state?.room) return;
     if (formLoadedForRoom === state.room.id) return;
@@ -153,6 +177,7 @@ export default function LobbyPage() {
     setDurationMinutes(state.room.duration_minutes);
     setStartAtLocal(toLocalDateTimeValue(new Date(state.room.scheduled_start_at)));
     setPasscode("");
+    setSelectedTopics(state.room.topic_slugs || []);
     setFormLoadedForRoom(state.room.id);
   }, [formLoadedForRoom, state]);
 
@@ -161,6 +186,15 @@ export default function LobbyPage() {
     [state],
   );
   const isHost = Boolean(meParticipant?.is_host);
+  const topicNameBySlug = useMemo(
+    () => new Map(topics.map((topic) => [topic.slug, topic.name])),
+    [topics],
+  );
+  const roomTopicNames = useMemo(
+    () =>
+      (state?.room.topic_slugs || []).map((slug) => topicNameBySlug.get(slug) || slug),
+    [state?.room.topic_slugs, topicNameBySlug],
+  );
 
   const totalProblems = useMemo(
     () => easyCount + mediumCount + hardCount,
@@ -206,6 +240,7 @@ export default function LobbyPage() {
             strict_check: strictCheck,
             duration_minutes: durationMinutes,
             start_at: parsedStartAt.toISOString(),
+            ...(selectedTopics.length ? { topic_slugs: selectedTopics } : {}),
             ...(passcode.trim() ? { passcode: passcode.trim() } : {}),
           },
         },
@@ -221,6 +256,7 @@ export default function LobbyPage() {
       setDurationMinutes(response.room.duration_minutes);
       setStartAtLocal(toLocalDateTimeValue(new Date(response.room.scheduled_start_at)));
       setPasscode("");
+      setSelectedTopics(response.room.topic_slugs || []);
       setFormLoadedForRoom(response.room.id);
       await fetchState();
     } catch (err) {
@@ -442,6 +478,40 @@ export default function LobbyPage() {
                   <option value="striver_sde_sheet">Striver SDE Sheet</option>
                 </select>
               </label>
+              <div className="space-y-2">
+                <p className="text-sm text-slate-200">Topics (optional)</p>
+                {topicsLoading ? (
+                  <p className="text-xs text-slate-400">Loading topics...</p>
+                ) : topicsError ? (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <span>{topicsError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadTopics()}
+                      className="rounded-full border border-slate-600/70 px-2 py-0.5 text-[11px] text-slate-200 transition hover:bg-slate-800"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <TopicSelector
+                    topics={topics}
+                    selected={selectedTopics}
+                    onToggle={(slug) =>
+                      setSelectedTopics((prev) =>
+                        prev.includes(slug)
+                          ? prev.filter((entry) => entry !== slug)
+                          : [...prev, slug],
+                      )
+                    }
+                    disabled={saving}
+                    showCounts={problemSource === "random"}
+                  />
+                )}
+                <p className="text-xs text-slate-400">
+                  Filters problems to any selected topic.
+                </p>
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 <label className="block">
                   Easy
@@ -552,6 +622,11 @@ export default function LobbyPage() {
                 Source:{" "}
                 {state?.room.problem_source ? formatProblemSource(state.room.problem_source) : "-"}
               </div>
+              {roomTopicNames.length ? (
+                <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
+                  Topics: {roomTopicNames.join(" • ")}
+                </div>
+              ) : null}
               <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2">
                 Mix: E{state?.room.easy_count ?? 0} / M{state?.room.medium_count ?? 0} / H
                 {state?.room.hard_count ?? 0}

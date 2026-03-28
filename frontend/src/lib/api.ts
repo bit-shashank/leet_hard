@@ -1,6 +1,7 @@
 import type {
   CreateRoomRequest,
   CreateRoomResponse,
+  ChatMessageInput,
   DashboardResponse,
   DiscoverRoomResponse,
   HistoryResponse,
@@ -12,13 +13,15 @@ import type {
   OnboardingVerifyRequest,
   OnboardingVerifyResponse,
   RoomStateResponse,
+  RoomFeedEvent,
+  RoomFeedResponse,
   TopicInfo,
   UpdateMeRequest,
   UpdateRoomSettingsRequest,
   UpdateRoomSettingsResponse,
 } from "@/lib/types";
 
-const API_BASE =
+export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
   "http://localhost:8000";
 
@@ -132,6 +135,32 @@ export function updateRoomSettings(
 
 export function getRoomState(roomCode: string, accessToken: string) {
   return request<RoomStateResponse>(`/api/v1/rooms/${roomCode}/state`, {
+    accessToken,
+  });
+}
+
+export function getRoomFeed(
+  roomCode: string,
+  accessToken: string,
+  opts?: { cursor?: string | null; limit?: number },
+) {
+  const query = new URLSearchParams();
+  if (opts?.cursor) query.set("cursor", opts.cursor);
+  if (opts?.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<RoomFeedResponse>(`/api/v1/rooms/${roomCode}/feed${suffix}`, {
+    accessToken,
+  });
+}
+
+export function sendRoomMessage(
+  roomCode: string,
+  payload: ChatMessageInput,
+  accessToken: string,
+) {
+  return request<RoomFeedEvent>(`/api/v1/rooms/${roomCode}/messages`, {
+    method: "POST",
+    body: payload,
     accessToken,
   });
 }

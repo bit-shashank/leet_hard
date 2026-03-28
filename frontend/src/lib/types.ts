@@ -1,4 +1,5 @@
 export type RoomStatus = "lobby" | "active" | "ended";
+export type SolveSource = "auto" | "manual";
 export type ProblemSource =
   | "random"
   | "neetcode_150"
@@ -62,6 +63,21 @@ export type RoomStateResponse = {
   problems: ProblemPublic[];
   leaderboard: LeaderboardEntry[];
   my_participant_id: string | null;
+  my_solved_slugs: string[];
+  server_time: string;
+};
+
+export type RoomLiveRoomPublic = {
+  status: RoomStatus;
+  starts_at: string | null;
+  ends_at: string | null;
+  duration_minutes: number;
+  sync_warning: string | null;
+};
+
+export type RoomLiveState = {
+  room: RoomLiveRoomPublic;
+  leaderboard: LeaderboardEntry[];
   my_solved_slugs: string[];
   server_time: string;
 };
@@ -145,6 +161,29 @@ export type UpdateRoomSettingsRequest = {
 
 export type UpdateRoomSettingsResponse = {
   room: RoomPublic;
+};
+
+export type ChatMessageInput = {
+  content: string;
+};
+
+export type RoomFeedEventType = "chat" | "solve" | "join" | "leave";
+
+export type RoomFeedEvent = {
+  id: string;
+  event_type: RoomFeedEventType;
+  message?: string | null;
+  problem_slug?: string | null;
+  source?: SolveSource | null;
+  actor_username: string;
+  actor_avatar_url: string | null;
+  event_at: string;
+  created_at: string;
+};
+
+export type RoomFeedResponse = {
+  items: RoomFeedEvent[];
+  next_cursor: string | null;
 };
 
 export type MeResponse = {

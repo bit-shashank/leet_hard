@@ -2,25 +2,32 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { SectionCard } from "@/components/section-card";
 import { ShareCopyButton } from "@/components/share-copy-button";
-import { ApiError, getRoomState, toggleManualSolve } from "@/lib/api";
+import { ApiError, API_BASE, getRoomFeed, getRoomState, sendRoomMessage, toggleManualSolve } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
-import type { ProblemPublic, RoomStateResponse } from "@/lib/types";
+import type { ProblemPublic, RoomFeedEvent, RoomLiveState, RoomStateResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
+const STATE_FALLBACK_POLL_INTERVAL_MS = 10000;
+const FEED_POLL_INTERVAL_MS = 12000;
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Unable to load room state.";
+}
+
+function parseFeedError(error: unknown) {
+  if (error instanceof ApiError) return error.message;
+  return "Unable to load live feed.";
 }
 
 function ActiveRoomLoadingSkeleton() {
@@ -65,6 +72,20 @@ export default function ActiveRoomPage() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const originalTitleRef = useRef<string | null>(null);
+  const [feedItems, setFeedItems] = useState<RoomFeedEvent[]>([]);
+  const [feedCursor, setFeedCursor] = useState<string | null>(null);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedError, setFeedError] = useState<string | null>(null);
+  const [chatMessage, setChatMessage] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [stateStreamConnected, setStateStreamConnected] = useState(false);
+  const [stateStreamWarning, setStateStreamWarning] = useState<string | null>(null);
+  const [feedStreamConnected, setFeedStreamConnected] = useState(false);
+  const [lastStateEventAt, setLastStateEventAt] = useState<number | null>(null);
+  const [lastFeedEventAt, setLastFeedEventAt] = useState<number | null>(null);
+  const [rightPaneTab, setRightPaneTab] = useState<"feed" | "leaderboard">("feed");
+  const feedCursorRef = useRef<string | null>(null);
+  const feedContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -102,28 +123,57 @@ export default function ActiveRoomPage() {
     }
   }, [accessToken, roomCode, router]);
 
+  const roomStatus = state?.room.status ?? "unknown";
+
   useEffect(() => {
     if (!accessToken) {
       setLoading(false);
       return;
     }
 
+    const isActive = roomStatus === "active";
+    const isStale = !lastStateEventAt || Date.now() - lastStateEventAt > 15000;
+    const shouldPoll = !isActive || !stateStreamConnected || isStale;
+    if (!shouldPoll) return;
+
     void fetchState();
+    const intervalMs = isActive ? STATE_FALLBACK_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const timer = setInterval(() => {
       void fetchState();
-    }, POLL_INTERVAL_MS);
+    }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [accessToken, fetchState]);
+  }, [accessToken, fetchState, roomStatus, stateStreamConnected, lastStateEventAt]);
 
   const solvedSet = useMemo(() => new Set(state?.my_solved_slugs ?? []), [state?.my_solved_slugs]);
   const canManuallySolve = Boolean(state?.my_participant_id);
+
+  useEffect(() => {
+    feedCursorRef.current = feedCursor;
+  }, [feedCursor]);
 
   const countdown = useMemo(() => {
     if (!state?.room.ends_at) return "00:00:00";
     const virtualServerNow = new Date(nowMs + serverOffsetMs).toISOString();
     return formatCountdown(state.room.ends_at, virtualServerNow);
   }, [nowMs, serverOffsetMs, state?.room.ends_at]);
+
+  const applyLiveState = useCallback((live: RoomLiveState) => {
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        room: {
+          ...prev.room,
+          ...live.room,
+        },
+        leaderboard: live.leaderboard,
+        my_solved_slugs: live.my_solved_slugs,
+        server_time: live.server_time,
+      };
+    });
+    setServerOffsetMs(new Date(live.server_time).getTime() - Date.now());
+  }, []);
 
   useEffect(() => {
     if (!state?.room) return;
@@ -143,6 +193,253 @@ export default function ActiveRoomPage() {
     const label = countdown === "00:00:00" ? "Ending" : `${countdown} left`;
     document.title = `${label} · ${roomLabel}`;
   }, [countdown, roomCode, state?.room]);
+
+  useEffect(() => {
+    if (!accessToken || !roomCode || state?.room.status !== "active") {
+      setStateStreamConnected(false);
+      setStateStreamWarning(null);
+      return;
+    }
+    if (!canManuallySolve) return;
+
+    let cancelled = false;
+    let backoff = 1000;
+    let controller: AbortController | null = null;
+
+    const startStream = async () => {
+      while (!cancelled) {
+        const url = new URL(`${API_BASE}/api/v1/rooms/${roomCode}/state/stream`);
+        controller = new AbortController();
+        try {
+          const response = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "text/event-stream",
+            },
+            signal: controller.signal,
+          });
+
+          if (!response.ok || !response.body) {
+            throw new Error(`Stream error (${response.status})`);
+          }
+
+          setStateStreamWarning(null);
+          backoff = 1000;
+          console.debug("[state-sse] connected", { roomCode });
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (!cancelled) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            buffer = buffer.replace(/\r/g, "");
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() ?? "";
+            for (const part of parts) {
+              if (!part.trim() || part.startsWith(":")) continue;
+              const lines = part.split("\n");
+              const dataLines = lines
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.replace(/^data:\s?/, ""));
+              if (!dataLines.length) continue;
+              try {
+                const payload = JSON.parse(dataLines.join("\n")) as RoomLiveState;
+                console.debug("[state-sse] event", {
+                  roomCode,
+                  status: payload.room.status,
+                  ends_at: payload.room.ends_at,
+                  leaderboard: payload.leaderboard.length,
+                  my_solved: payload.my_solved_slugs.length,
+                });
+                setLastStateEventAt(Date.now());
+                setStateStreamConnected(true);
+                applyLiveState(payload);
+              } catch {
+                console.debug("[state-sse] parse-error", dataLines.join("\n").slice(0, 200));
+              }
+            }
+          }
+        } catch (err) {
+          if (cancelled) break;
+          console.debug("[state-sse] error", err);
+          setStateStreamConnected(false);
+          setStateStreamWarning("Live updates disconnected. Falling back to slower refresh...");
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          backoff = Math.min(backoff * 2, 15000);
+        }
+      }
+    };
+
+    void startStream();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      setStateStreamConnected(false);
+    };
+  }, [accessToken, roomCode, state?.room.status, canManuallySolve, applyLiveState]);
+
+  const appendFeedEvents = useCallback((incoming: RoomFeedEvent[]) => {
+    if (!incoming.length) return;
+    setFeedError(null);
+    setFeedItems((prev) => {
+      const seen = new Set(prev.map((entry) => entry.id));
+      const merged = [...prev];
+      for (const event of incoming) {
+        if (seen.has(event.id)) continue;
+        merged.push(event);
+        seen.add(event.id);
+      }
+      merged.sort((a, b) => {
+        if (a.created_at === b.created_at) return a.id.localeCompare(b.id);
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+      return merged.slice(-200);
+    });
+
+    const lastEvent = incoming[incoming.length - 1];
+    setFeedCursor(`${lastEvent.created_at}|${lastEvent.id}`);
+  }, []);
+
+  useEffect(() => {
+    const container = feedContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [feedItems.length]);
+
+  const loadFeed = useCallback(async () => {
+    if (!accessToken || !roomCode || !canManuallySolve || state?.room.status !== "active") return;
+    setFeedLoading(true);
+    setFeedError(null);
+    try {
+      const response = await getRoomFeed(roomCode, accessToken, { limit: 50 });
+      setFeedItems(response.items);
+      setFeedCursor(response.next_cursor);
+    } catch (err) {
+      setFeedError(parseFeedError(err));
+    } finally {
+      setFeedLoading(false);
+    }
+  }, [accessToken, roomCode, canManuallySolve, state?.room.status]);
+
+  useEffect(() => {
+    void loadFeed();
+  }, [loadFeed]);
+
+  useEffect(() => {
+    if (!accessToken || !roomCode || !canManuallySolve || state?.room.status !== "active") return;
+    const isStale = !lastFeedEventAt || Date.now() - lastFeedEventAt > 15000;
+    if (feedStreamConnected && !isStale) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const response = await getRoomFeed(roomCode, accessToken, {
+          limit: 50,
+          cursor: feedCursorRef.current ?? undefined,
+        });
+        if (response.items.length) {
+          appendFeedEvents(response.items);
+          setLastFeedEventAt(Date.now());
+        }
+      } catch (err) {
+        if (!cancelled) setFeedError(parseFeedError(err));
+      }
+    };
+
+    void poll();
+    const interval = setInterval(() => void poll(), FEED_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    accessToken,
+    roomCode,
+    canManuallySolve,
+    state?.room.status,
+    appendFeedEvents,
+    feedStreamConnected,
+    lastFeedEventAt,
+  ]);
+
+  useEffect(() => {
+    if (!accessToken || !roomCode || !canManuallySolve || state?.room.status !== "active") return;
+    let cancelled = false;
+    let backoff = 1000;
+    let controller: AbortController | null = null;
+
+    const startStream = async () => {
+      while (!cancelled) {
+        const cursor = feedCursorRef.current;
+        const url = new URL(`${API_BASE}/api/v1/rooms/${roomCode}/feed/stream`);
+        if (cursor) url.searchParams.set("cursor", cursor);
+
+        controller = new AbortController();
+        try {
+          const response = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "text/event-stream",
+            },
+            signal: controller.signal,
+          });
+
+          if (!response.ok || !response.body) {
+            throw new Error(`Stream error (${response.status})`);
+          }
+
+          backoff = 1000;
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          setFeedError(null);
+
+          while (!cancelled) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            buffer = buffer.replace(/\r/g, "");
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() ?? "";
+            for (const part of parts) {
+              if (!part.trim() || part.startsWith(":")) continue;
+              const lines = part.split("\n");
+              const dataLines = lines
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.replace(/^data:\s?/, ""));
+              if (!dataLines.length) continue;
+              try {
+                const payload = JSON.parse(dataLines.join("\n")) as RoomFeedEvent;
+                console.debug("[feed-sse] event", { roomCode, id: payload.id, type: payload.event_type });
+                setLastFeedEventAt(Date.now());
+                setFeedStreamConnected(true);
+                appendFeedEvents([payload]);
+              } catch {
+                console.debug("[feed-sse] parse-error", dataLines.join("\n").slice(0, 200));
+              }
+            }
+          }
+        } catch (err) {
+          if (cancelled) break;
+          setFeedStreamConnected(false);
+          setFeedError("Live updates disconnected. Reconnecting...");
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          backoff = Math.min(backoff * 2, 15000);
+        }
+      }
+    };
+
+    void startStream();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      setFeedStreamConnected(false);
+    };
+  }, [accessToken, roomCode, canManuallySolve, state?.room.status, appendFeedEvents]);
 
   async function handleToggle(problem: ProblemPublic) {
     if (!accessToken || !state || !canManuallySolve) return;
@@ -164,6 +461,29 @@ export default function ActiveRoomPage() {
       setError(parseApiError(err));
     } finally {
       setPendingSlug(null);
+    }
+  }
+
+  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken || !roomCode || !canManuallySolve) return;
+    const trimmed = chatMessage.trim();
+    if (!trimmed) return;
+
+    setSendingMessage(true);
+    setFeedError(null);
+    try {
+      const response = await sendRoomMessage(
+        roomCode,
+        { content: trimmed },
+        accessToken,
+      );
+      appendFeedEvents([response]);
+      setChatMessage("");
+    } catch (err) {
+      setFeedError(parseFeedError(err));
+    } finally {
+      setSendingMessage(false);
     }
   }
 
@@ -260,6 +580,12 @@ export default function ActiveRoomPage() {
         </div>
       ) : null}
 
+      {stateStreamWarning ? (
+        <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          {stateStreamWarning}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="rounded-xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
           {error}
@@ -325,52 +651,172 @@ export default function ActiveRoomPage() {
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="Leaderboard"
-          subtitle="Ranked by solved count, tie-broken by earlier last solve time."
-        >
-          <table className="table-grid">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Participant</th>
-                <th>Solved</th>
-                <th>Last Solve</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state?.leaderboard.map((entry) => (
-                <tr key={entry.participant_id}>
-                  <td className="font-semibold text-cyan-200">#{entry.rank}</td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono font-medium text-slate-100">
-                            @{entry.leetcode_username}
-                          </span>
-                          {entry.is_host ? (
-                            <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs text-cyan-200">
-                              Host
-                            </span>
-                          ) : null}
-                          {state.my_participant_id === entry.participant_id ? (
-                            <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-200">
-                              You
-                            </span>
-                          ) : null}
+        <div className="space-y-6">
+          <div className="inline-flex w-full rounded-2xl border border-slate-700/60 bg-slate-950/40 p-1 text-sm">
+            <button
+              type="button"
+              onClick={() => setRightPaneTab("feed")}
+              className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                rightPaneTab === "feed"
+                  ? "bg-emerald-400 text-slate-900"
+                  : "text-slate-300 hover:bg-slate-800/60"
+              }`}
+            >
+              Live Feed
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightPaneTab("leaderboard")}
+              className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                rightPaneTab === "leaderboard"
+                  ? "bg-emerald-400 text-slate-900"
+                  : "text-slate-300 hover:bg-slate-800/60"
+              }`}
+            >
+              Leaderboard
+            </button>
+          </div>
+
+          {rightPaneTab === "feed" ? (
+            <SectionCard title="Live Feed" subtitle="Chat with your room and see live updates.">
+              <div className="space-y-3">
+                <div
+                  ref={feedContainerRef}
+                  className="site-scrollbar max-h-[360px] space-y-3 overflow-y-auto pr-1"
+                >
+                  {feedLoading ? (
+                    <p className="text-sm text-slate-400">Loading live feed...</p>
+                  ) : feedItems.length ? (
+                    feedItems.map((event) => {
+                      const isChat = event.event_type === "chat";
+                      let body = "";
+                      if (event.event_type === "solve") {
+                        body = `solved ${event.problem_slug ?? "a problem"}`;
+                      } else if (event.event_type === "join") {
+                        body = "joined the room";
+                      } else if (event.event_type === "leave") {
+                        body = "left the room";
+                      } else {
+                        body = event.message ?? "";
+                      }
+
+                      return (
+                        <article
+                          key={event.id}
+                          className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
+                        >
+                          <div className="flex items-start gap-2">
+                            <AvatarBadge
+                              name={event.actor_username}
+                              avatarUrl={event.actor_avatar_url}
+                              size="sm"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs text-slate-400">
+                                {prettyDateTime(event.event_at)}
+                              </p>
+                              <p className="text-slate-100">
+                                <span className="font-semibold text-cyan-200">
+                                  @{event.actor_username}
+                                </span>{" "}
+                                {isChat ? (
+                                  <span className="text-slate-100">{body}</span>
+                                ) : (
+                                  <span className="text-slate-300">
+                                    {body}
+                                  </span>
+                                )}
+                                {event.event_type === "solve" && event.source ? (
+                                  <span className="ml-2 rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-200">
+                                    {event.source}
+                                  </span>
+                                ) : null}
+                              </p>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })
+                  ) : (
+                    <p className="text-sm text-slate-400">
+                      No live activity yet. Be the first to say hi.
+                    </p>
+                  )}
+                </div>
+
+                {feedError ? (
+                  <div className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                    {feedError}
+                  </div>
+                ) : null}
+
+                <form onSubmit={handleSendMessage} className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    disabled={!canManuallySolve || sendingMessage}
+                    placeholder={canManuallySolve ? "Send a message..." : "Join the room to chat"}
+                    className="w-full rounded-lg border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none ring-emerald-300/70 transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!canManuallySolve || sendingMessage || !chatMessage.trim()}
+                    className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {sendingMessage ? "Sending..." : "Send"}
+                  </button>
+                </form>
+              </div>
+            </SectionCard>
+          ) : (
+            <SectionCard
+              title="Leaderboard"
+              subtitle="Ranked by solved count, tie-broken by earlier last solve time."
+            >
+              <table className="table-grid">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Participant</th>
+                    <th>Solved</th>
+                    <th>Last Solve</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {state?.leaderboard.map((entry) => (
+                    <tr key={entry.participant_id}>
+                      <td className="font-semibold text-cyan-200">#{entry.rank}</td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono font-medium text-slate-100">
+                                @{entry.leetcode_username}
+                              </span>
+                              {entry.is_host ? (
+                                <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs text-cyan-200">
+                                  Host
+                                </span>
+                              ) : null}
+                              {state.my_participant_id === entry.participant_id ? (
+                                <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-200">
+                                  You
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
-                  <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </SectionCard>
+                      </td>
+                      <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
+                      <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </SectionCard>
+          )}
+        </div>
       </section>
     </main>
   );

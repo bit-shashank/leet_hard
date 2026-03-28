@@ -1,18 +1,24 @@
+import asyncio
+import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, case, func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import auth
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import (
     Participant,
     ParticipantSolve,
     ProblemSource,
+    RoomFeedEvent,
+    RoomFeedEventType,
     Room,
     RoomProblem,
     RoomStatus,
@@ -23,6 +29,7 @@ from app.models import (
 )
 from app.security import get_current_user
 from app.schemas import (
+    ChatMessageInput,
     CreateRoomRequest,
     CreateRoomResponse,
     DiscoverRoomResponse,
@@ -35,6 +42,10 @@ from app.schemas import (
     ManualSolveResponse,
     ParticipantPublic,
     ProblemPublic,
+    RoomFeedEventPublic,
+    RoomFeedResponse,
+    RoomLiveRoomPublic,
+    RoomLiveState,
     RoomPublic,
     RoomStateResponse,
     StartRoomResponse,
@@ -141,6 +152,16 @@ def _room_to_public(room: Room) -> RoomPublic:
     )
 
 
+def _room_to_live_public(room: Room) -> RoomLiveRoomPublic:
+    return RoomLiveRoomPublic(
+        status=room.status,
+        starts_at=_coerce_utc(room.starts_at),
+        ends_at=_coerce_utc(room.ends_at),
+        duration_minutes=room.duration_minutes,
+        sync_warning=room.sync_warning,
+    )
+
+
 def _participant_to_public(participant: Participant) -> ParticipantPublic:
     return ParticipantPublic(
         id=participant.id,
@@ -160,6 +181,66 @@ def _problem_to_public(problem: RoomProblem) -> ProblemPublic:
         difficulty=problem.difficulty,
         sort_order=problem.sort_order,
     )
+
+
+def _feed_event_to_public(event: RoomFeedEvent) -> RoomFeedEventPublic:
+    return RoomFeedEventPublic(
+        id=event.id,
+        event_type=event.event_type,
+        message=event.message,
+        problem_slug=event.problem_slug,
+        source=event.source,
+        actor_username=event.actor_username,
+        actor_avatar_url=event.actor_avatar_url,
+        event_at=_coerce_utc(event.event_at),
+        created_at=_coerce_utc(event.created_at),
+    )
+
+
+def _encode_feed_cursor(created_at: datetime, event_id: str) -> str:
+    coerced = _coerce_utc(created_at) or created_at
+    return f'{coerced.isoformat()}|{event_id}'
+
+
+def _parse_feed_cursor(cursor: Optional[str]) -> Optional[tuple[datetime, str]]:
+    if not cursor:
+        return None
+    parts = cursor.split('|', 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid feed cursor')
+    try:
+        parsed = datetime.fromisoformat(parts[0])
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid feed cursor') from exc
+    created_at = _coerce_utc(parsed) or parsed
+    return created_at, parts[1]
+
+
+def _record_feed_event(
+    db: Session,
+    room: Room,
+    participant: Optional[Participant],
+    event_type: RoomFeedEventType,
+    event_at: datetime,
+    message: Optional[str] = None,
+    problem_slug: Optional[str] = None,
+    source: Optional[SolveSource] = None,
+) -> RoomFeedEvent:
+    actor_username = participant.leetcode_username if participant else 'system'
+    actor_avatar_url = participant.avatar_url if participant else None
+    event = RoomFeedEvent(
+        room_id=room.id,
+        participant_id=participant.id if participant else None,
+        event_type=event_type,
+        message=message,
+        problem_slug=problem_slug,
+        source=source,
+        actor_username=actor_username,
+        actor_avatar_url=actor_avatar_url,
+        event_at=event_at,
+    )
+    db.add(event)
+    return event
 
 
 def _get_room_or_404(db: Session, room_code: str) -> Room:
@@ -356,6 +437,15 @@ def _upsert_auto_solve(
                 event_at=solved_at,
             )
         )
+        _record_feed_event(
+            db,
+            room,
+            participant,
+            RoomFeedEventType.SOLVE,
+            event_at=solved_at,
+            problem_slug=problem_slug,
+            source=SolveSource.AUTO,
+        )
         return True
 
     updated = False
@@ -377,6 +467,15 @@ def _upsert_auto_solve(
                 source=SolveSource.AUTO,
                 event_at=solved_at,
             )
+        )
+        _record_feed_event(
+            db,
+            room,
+            participant,
+            RoomFeedEventType.SOLVE,
+            event_at=solved_at,
+            problem_slug=problem_slug,
+            source=SolveSource.AUTO,
         )
 
     return updated
@@ -670,6 +769,22 @@ def _maybe_auto_start_room(db: Session, room: Room) -> bool:
     return True
 
 
+def _require_active_room(db: Session, room: Room) -> None:
+    dirty = False
+    if _maybe_auto_start_room(db, room):
+        dirty = True
+    if _update_room_status_if_expired(room):
+        dirty = True
+    if dirty:
+        db.commit()
+        db.refresh(room)
+    if room.status != RoomStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Room is not active',
+        )
+
+
 def _build_room_state(
     db: Session,
     room: Room,
@@ -702,6 +817,28 @@ def _build_room_state(
         problems=[_problem_to_public(problem) for problem in problems],
         leaderboard=_build_leaderboard(db, room),
         my_participant_id=participant.id if participant else None,
+        my_solved_slugs=my_solved_slugs,
+        server_time=_utcnow(),
+    )
+
+
+def _build_room_live_state(
+    db: Session,
+    room: Room,
+    participant: Optional[Participant],
+) -> RoomLiveState:
+    my_solved_slugs: list[str] = []
+    if participant is not None:
+        my_solved_slugs = db.scalars(
+            select(ParticipantSolve.problem_slug).where(
+                ParticipantSolve.room_id == room.id,
+                ParticipantSolve.participant_id == participant.id,
+            )
+        ).all()
+
+    return RoomLiveState(
+        room=_room_to_live_public(room),
+        leaderboard=_build_leaderboard(db, room),
         my_solved_slugs=my_solved_slugs,
         server_time=_utcnow(),
     )
@@ -1011,6 +1148,13 @@ def join_room(
     db.flush()
 
     _maybe_refresh_participant_avatar(db, participant, force=True)
+    _record_feed_event(
+        db,
+        room,
+        participant,
+        RoomFeedEventType.JOIN,
+        event_at=_utcnow(),
+    )
 
     try:
         db.commit()
@@ -1062,6 +1206,13 @@ def leave_room(
             detail='You can leave only before the room starts',
         )
 
+    _record_feed_event(
+        db,
+        room,
+        participant,
+        RoomFeedEventType.LEAVE,
+        event_at=_utcnow(),
+    )
     db.delete(participant)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1194,6 +1345,77 @@ def get_room_state(
     return _build_room_state(db, room, participant)
 
 
+@router.get('/{room_code}/state/stream')
+def stream_room_state(
+    room_code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = _get_room_or_404(db, room_code)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
+
+    _require_active_room(db, room)
+    if room.status != RoomStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Live state is available only for active rooms',
+        )
+
+    normalized_code = room.room_code
+    user_id = current_user.id
+
+    async def event_stream():
+        last_payload = None
+        last_ping = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(2)
+                with SessionLocal() as session:
+                    active_room = session.scalar(
+                        select(Room).where(Room.room_code == normalized_code)
+                    )
+                    if not active_room or active_room.status != RoomStatus.ACTIVE:
+                        print(f'[state-sse] room inactive or missing: {normalized_code}')
+                        break
+                    active_participant = session.scalar(
+                        select(Participant).where(
+                            Participant.room_id == active_room.id,
+                            Participant.user_id == user_id,
+                        )
+                    )
+                    if not active_participant:
+                        print(f'[state-sse] participant missing: {normalized_code} user={user_id}')
+                        break
+                    state = _build_room_live_state(session, active_room, active_participant)
+                    data = state.model_dump(mode='json')
+
+                payload = json.dumps(data, sort_keys=True)
+                compare_data = dict(data)
+                compare_data.pop('server_time', None)
+                compare_payload = json.dumps(compare_data, sort_keys=True)
+
+                if compare_payload != last_payload:
+                    print(f'[state-sse] emit {normalized_code} size={len(payload)}')
+                    yield f'event: state\\ndata: {payload}\\n\\n'
+                    last_payload = compare_payload
+
+                now = time.monotonic()
+                if now - last_ping >= 15:
+                    print(f'[state-sse] keep-alive {normalized_code}')
+                    yield ': keep-alive\\n\\n'
+                    last_ping = now
+        except asyncio.CancelledError:
+            return
+
+    headers = {
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+    }
+    return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
+
+
 @router.post('/{room_code}/solves/manual', response_model=ManualSolveResponse)
 def toggle_manual_solve(
     room_code: str,
@@ -1256,6 +1478,15 @@ def toggle_manual_solve(
                     event_at=solved_at,
                 )
             )
+            _record_feed_event(
+                db,
+                room,
+                participant,
+                RoomFeedEventType.SOLVE,
+                event_at=solved_at,
+                problem_slug=payload.problem_slug,
+                source=SolveSource.MANUAL,
+            )
     else:
         if (
             existing
@@ -1281,6 +1512,149 @@ def toggle_manual_solve(
 
     db.commit()
     return ManualSolveResponse(ok=True)
+
+
+def _query_feed_events(
+    db: Session,
+    room: Room,
+    cursor: Optional[str],
+    limit: int,
+) -> tuple[list[RoomFeedEvent], Optional[str]]:
+    cursor_value = _parse_feed_cursor(cursor)
+    cursor_at = None
+    cursor_id = None
+    if cursor_value:
+        cursor_at, cursor_id = cursor_value
+        bind = db.get_bind()
+        if bind is not None and bind.dialect.name == 'sqlite' and cursor_at.tzinfo is not None:
+            cursor_at = cursor_at.replace(tzinfo=None)
+    stmt = select(RoomFeedEvent).where(RoomFeedEvent.room_id == room.id)
+    if cursor_value and cursor_at is not None and cursor_id is not None:
+        stmt = stmt.where(
+            or_(
+                RoomFeedEvent.created_at > cursor_at,
+                and_(RoomFeedEvent.created_at == cursor_at, RoomFeedEvent.id > cursor_id),
+            )
+        )
+    stmt = stmt.order_by(RoomFeedEvent.created_at.asc(), RoomFeedEvent.id.asc()).limit(limit)
+    events = db.scalars(stmt).all()
+    next_cursor = None
+    if events:
+        last = events[-1]
+        next_cursor = _encode_feed_cursor(last.created_at, last.id)
+    return events, next_cursor
+
+
+@router.post(
+    '/{room_code}/messages',
+    response_model=RoomFeedEventPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_room_message(
+    room_code: str,
+    payload: ChatMessageInput,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = _get_room_or_404(db, room_code)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
+
+    _require_active_room(db, room)
+    now = _utcnow()
+    event = _record_feed_event(
+        db,
+        room,
+        participant,
+        RoomFeedEventType.CHAT,
+        event_at=now,
+        message=payload.content,
+    )
+    db.commit()
+    db.refresh(event)
+    return _feed_event_to_public(event)
+
+
+@router.get('/{room_code}/feed', response_model=RoomFeedResponse)
+def get_room_feed(
+    room_code: str,
+    cursor: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = _get_room_or_404(db, room_code)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
+
+    _require_active_room(db, room)
+    events, next_cursor = _query_feed_events(db, room, cursor, limit)
+    return RoomFeedResponse(
+        items=[_feed_event_to_public(event) for event in events],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get('/{room_code}/feed/stream')
+def stream_room_feed(
+    room_code: str,
+    cursor: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = _get_room_or_404(db, room_code)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
+
+    _require_active_room(db, room)
+    _parse_feed_cursor(cursor)
+    normalized_code = room.room_code
+
+    async def event_stream():
+        last_cursor = cursor
+        last_ping = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(1)
+                with SessionLocal() as session:
+                    active_room = session.scalar(
+                        select(Room).where(Room.room_code == normalized_code)
+                    )
+                    if not active_room or active_room.status != RoomStatus.ACTIVE:
+                        break
+                    events, next_cursor = _query_feed_events(
+                        session,
+                        active_room,
+                        last_cursor,
+                        limit,
+                    )
+
+                if events:
+                    for event in events:
+                        payload = json.dumps(
+                            _feed_event_to_public(event).model_dump(mode='json')
+                        )
+                        print(f'[feed-sse] emit {normalized_code} id={event.id}')
+                        yield f'event: feed\\ndata: {payload}\\n\\n'
+                    last_cursor = next_cursor
+
+                now = time.monotonic()
+                if now - last_ping >= 15:
+                    print(f'[feed-sse] keep-alive {normalized_code}')
+                    yield ': keep-alive\\n\\n'
+                    last_ping = now
+        except asyncio.CancelledError:
+            return
+
+    headers = {
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+    }
+    return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
 
 
 @router.get('/{room_code}/history', response_model=HistoryResponse)

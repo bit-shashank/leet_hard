@@ -51,6 +51,13 @@ class SolveEventType(str, Enum):
     AUTO_DETECTED = 'auto_detected'
 
 
+class RoomFeedEventType(str, Enum):
+    CHAT = 'chat'
+    SOLVE = 'solve'
+    JOIN = 'join'
+    LEAVE = 'leave'
+
+
 class VerificationChallengeStatus(str, Enum):
     ISSUED = 'issued'
     VERIFIED = 'verified'
@@ -214,6 +221,30 @@ class SolveEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     room: Mapped['Room'] = relationship(back_populates='solve_events')
+
+
+class RoomFeedEvent(Base):
+    __tablename__ = 'room_feed_events'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    room_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('rooms.id', ondelete='CASCADE'), index=True
+    )
+    participant_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey('participants.id', ondelete='SET NULL'), index=True, nullable=True
+    )
+    event_type: Mapped[RoomFeedEventType] = mapped_column(
+        SAEnum(RoomFeedEventType, name='room_feed_event_type')
+    )
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    problem_slug: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    source: Mapped[Optional[SolveSource]] = mapped_column(
+        SAEnum(SolveSource, name='room_feed_event_source'), nullable=True
+    )
+    actor_username: Mapped[str] = mapped_column(String(50))
+    actor_avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class LeetCodeVerificationChallenge(Base):

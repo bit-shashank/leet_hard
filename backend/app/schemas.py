@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models import ProblemSource, RoomStatus, SolveEventType, SolveSource
+from app.models import ProblemSource, RoomFeedEventType, RoomStatus, SolveEventType, SolveSource
 
 
 class RoomSettingsInput(BaseModel):
@@ -170,6 +170,21 @@ class RoomStateResponse(BaseModel):
     server_time: datetime
 
 
+class RoomLiveRoomPublic(BaseModel):
+    status: RoomStatus
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+    duration_minutes: int
+    sync_warning: Optional[str]
+
+
+class RoomLiveState(BaseModel):
+    room: RoomLiveRoomPublic
+    leaderboard: List[LeaderboardEntry]
+    my_solved_slugs: List[str]
+    server_time: datetime
+
+
 class CreateRoomResponse(BaseModel):
     room: RoomPublic
     participant: ParticipantPublic
@@ -212,6 +227,18 @@ class ManualSolveResponse(BaseModel):
     ok: bool
 
 
+class ChatMessageInput(BaseModel):
+    content: str = Field(min_length=1, max_length=300)
+
+    @field_validator('content')
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError('Message cannot be empty')
+        return cleaned
+
+
 class HistoryEvent(BaseModel):
     participant_id: str
     participant_leetcode_username: str
@@ -226,6 +253,23 @@ class HistoryResponse(BaseModel):
     problems: List[ProblemPublic]
     leaderboard: List[LeaderboardEntry]
     events: List[HistoryEvent]
+
+
+class RoomFeedEventPublic(BaseModel):
+    id: str
+    event_type: RoomFeedEventType
+    message: Optional[str]
+    problem_slug: Optional[str]
+    source: Optional[SolveSource]
+    actor_username: str
+    actor_avatar_url: Optional[str]
+    event_at: datetime
+    created_at: datetime
+
+
+class RoomFeedResponse(BaseModel):
+    items: List[RoomFeedEventPublic]
+    next_cursor: Optional[str]
 
 
 class MeResponse(BaseModel):

@@ -264,55 +264,87 @@ export default function RoomHistoryPage() {
           className="lg:flex lg:h-full lg:min-h-0 lg:flex-col"
           contentClassName="site-scrollbar lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
         >
-          <table className="table-grid">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Participant</th>
-                <th>Solved</th>
-                <th>Last Solve</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history?.leaderboard.map((entry) => (
-                <tr key={entry.participant_id}>
-                  <td className="font-semibold text-cyan-200">#{entry.rank}</td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
-                      <div>
-                        <span className="font-mono font-medium text-slate-100">
-                          @{entry.leetcode_username}
-                        </span>
-                      </div>
+          <div className="space-y-3 sm:hidden">
+            {history?.leaderboard.map((entry) => (
+              <article
+                key={entry.participant_id}
+                className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AvatarBadge
+                      name={entry.leetcode_username}
+                      avatarUrl={entry.avatar_url}
+                      size="sm"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-mono font-medium text-slate-100">
+                        @{entry.leetcode_username}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Rank #{entry.rank} · {entry.solved_count} solved
+                      </p>
                     </div>
-                  </td>
-                  <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
-                  <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
+                  </div>
+                  <span className="text-xs text-slate-400">
+                    {prettyDateTime(entry.last_solved_at)}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="hidden sm:block">
+            <table className="table-grid w-full">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Participant</th>
+                  <th>Solved</th>
+                  <th className="hidden sm:table-cell">Last Solve</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history?.leaderboard.map((entry) => (
+                  <tr key={entry.participant_id}>
+                    <td className="font-semibold text-cyan-200">#{entry.rank}</td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <AvatarBadge name={entry.leetcode_username} avatarUrl={entry.avatar_url} size="sm" />
+                        <div className="min-w-0">
+                          <span className="truncate font-mono font-medium text-slate-100">
+                            @{entry.leetcode_username}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="font-semibold text-emerald-200">{entry.solved_count}</td>
+                    <td className="text-xs text-slate-300">{prettyDateTime(entry.last_solved_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </SectionCard>
 
         <SectionCard
           title="Solve Timeline"
           subtitle="All auto/manual solve events in chronological order."
           className="lg:flex lg:h-full lg:min-h-0 lg:flex-col"
-          contentClassName="lg:min-h-0 lg:flex-1"
+          contentClassName="min-w-0 lg:min-h-0 lg:flex-1"
         >
-          <div className="site-scrollbar space-y-3 lg:h-full lg:overflow-y-auto lg:pr-1">
+          <div className="site-scrollbar space-y-3 overflow-x-hidden lg:h-full lg:overflow-y-auto lg:pr-1">
             {history?.events.length ? (
               history.events.map((event, idx) => (
                 <div
                   key={`${event.participant_id}-${event.problem_slug}-${event.event_at}-${idx}`}
                   className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
                 >
-                  <p className="text-slate-100">
+                  <p className="text-slate-100 break-words">
                     <span className="font-semibold text-cyan-200">
                       @{event.participant_leetcode_username}
                     </span>{" "}
-                    <span className="font-mono text-slate-300">{event.problem_slug}</span>
+                    <span className="font-mono text-slate-300 break-all">{event.problem_slug}</span>
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
                     {event.event_type} via {event.source} · {prettyDateTime(event.event_at)}

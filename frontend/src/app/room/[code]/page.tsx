@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
@@ -64,6 +64,7 @@ export default function ActiveRoomPage() {
   const [pendingSlug, setPendingSlug] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
+  const originalTitleRef = useRef<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -123,6 +124,25 @@ export default function ActiveRoomPage() {
     const virtualServerNow = new Date(nowMs + serverOffsetMs).toISOString();
     return formatCountdown(state.room.ends_at, virtualServerNow);
   }, [nowMs, serverOffsetMs, state?.room.ends_at]);
+
+  useEffect(() => {
+    if (!state?.room) return;
+    if (originalTitleRef.current === null) {
+      originalTitleRef.current = document.title;
+    }
+    return () => {
+      if (originalTitleRef.current !== null) {
+        document.title = originalTitleRef.current;
+      }
+    };
+  }, [state?.room]);
+
+  useEffect(() => {
+    if (!state?.room) return;
+    const roomLabel = state.room.room_title || `Room ${roomCode}`;
+    const label = countdown === "00:00:00" ? "Ending" : `${countdown} left`;
+    document.title = `${label} · ${roomLabel}`;
+  }, [countdown, roomCode, state?.room]);
 
   async function handleToggle(problem: ProblemPublic) {
     if (!accessToken || !state || !canManuallySolve) return;

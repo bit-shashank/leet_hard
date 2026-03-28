@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
@@ -12,6 +12,8 @@ import { saveFlashNotice } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import type { DashboardResponse } from "@/lib/types";
+
+type RecentRoomsTab = "active" | "lobby" | "ended";
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -23,6 +25,33 @@ function roomHref(roomCode: string, status: "lobby" | "active" | "ended") {
   if (status === "active") return `/room/${normalized}`;
   if (status === "ended") return `/room/${normalized}/history`;
   return `/room/${normalized}/lobby`;
+}
+
+function relativeTimeText(value: string | null) {
+  if (!value) return "soon";
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return prettyDateTime(value);
+  const diffMs = target.getTime() - Date.now();
+  const absMinutes = Math.max(1, Math.round(Math.abs(diffMs) / 60000));
+  if (absMinutes < 60) {
+    return diffMs >= 0 ? `in ${absMinutes}m` : `${absMinutes}m ago`;
+  }
+  const absHours = Math.round(absMinutes / 60);
+  if (absHours < 24) {
+    return diffMs >= 0 ? `in ${absHours}h` : `${absHours}h ago`;
+  }
+  const absDays = Math.round(absHours / 24);
+  return diffMs >= 0 ? `in ${absDays}d` : `${absDays}d ago`;
+}
+
+function roomStatusClass(status: RecentRoomsTab) {
+  if (status === "active") {
+    return "border-emerald-300/40 bg-emerald-500/15 text-emerald-100";
+  }
+  if (status === "lobby") {
+    return "border-cyan-300/40 bg-cyan-500/15 text-cyan-100";
+  }
+  return "border-slate-500/40 bg-slate-600/20 text-slate-200";
 }
 
 function StatsSkeleton() {
@@ -70,6 +99,27 @@ export default function DashboardPage() {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [primaryLeet, setPrimaryLeet] = useState("");
+  const [recentTab, setRecentTab] = useState<RecentRoomsTab>("active");
+
+  const recentRoomsByStatus = useMemo(() => {
+    const recentRooms = dashboard?.recent_rooms || [];
+    return {
+      active: recentRooms.filter((room) => room.status === "active"),
+      lobby: recentRooms.filter((room) => room.status === "lobby"),
+      ended: recentRooms.filter((room) => room.status === "ended"),
+    };
+  }, [dashboard?.recent_rooms]);
+  const recentTabCounts = useMemo(
+    () => ({
+      active: recentRoomsByStatus.active.length,
+      lobby: recentRoomsByStatus.lobby.length,
+      ended: recentRoomsByStatus.ended.length,
+    }),
+    [recentRoomsByStatus.active.length, recentRoomsByStatus.ended.length, recentRoomsByStatus.lobby.length],
+  );
+  const visibleRecentRooms = recentRoomsByStatus[recentTab];
+  const hasAnyRecentRoom =
+    recentTabCounts.active + recentTabCounts.lobby + recentTabCounts.ended > 0;
 
   useEffect(() => {
     setDisplayName(me?.display_name || "");
@@ -106,6 +156,22 @@ export default function DashboardPage() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (recentTabCounts.active > 0) {
+      setRecentTab("active");
+      return;
+    }
+    if (recentTabCounts.lobby > 0) {
+      setRecentTab("lobby");
+      return;
+    }
+    if (recentTabCounts.ended > 0) {
+      setRecentTab("ended");
+      return;
+    }
+    setRecentTab("active");
+  }, [recentTabCounts.active, recentTabCounts.ended, recentTabCounts.lobby]);
 
   async function handleProfileSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -305,15 +371,35 @@ export default function DashboardPage() {
             Refresh
           </button>
         </div>
+        <div className="mb-4 flex flex-wrap gap-2">
+          {[
+            { key: "active" as const, label: "Active" },
+            { key: "lobby" as const, label: "Upcoming" },
+            { key: "ended" as const, label: "Ended" },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setRecentTab(tab.key)}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                recentTab === tab.key
+                  ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-100"
+                  : "border-slate-600/70 bg-slate-900/40 text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              {tab.label} ({recentTabCounts[tab.key]})
+            </button>
+          ))}
+        </div>
         {loading ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 3 }).map((_, index) => (
               <RecentRoomSkeleton key={`recent-room-skeleton-${index}`} />
             ))}
           </div>
-        ) : dashboard?.recent_rooms.length ? (
+        ) : visibleRecentRooms.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {dashboard.recent_rooms.map((room) => (
+            {visibleRecentRooms.map((room) => (
               <article
                 key={`${room.room_code}-${room.joined_at}`}
                 className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
@@ -323,26 +409,56 @@ export default function DashboardPage() {
                     <h3 className="text-lg font-semibold text-slate-100">{room.room_title}</h3>
                     <p className="mt-1 font-mono text-xs uppercase text-slate-400">{room.room_code}</p>
                   </div>
-                  <span className="rounded-full border border-slate-500/60 bg-slate-800/60 px-2 py-0.5 text-xs uppercase text-slate-200">
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-xs uppercase ${roomStatusClass(room.status)}`}
+                  >
                     {room.status}
                   </span>
                 </div>
                 <div className="mt-3 space-y-1 text-xs text-slate-300">
+                  {recentTab === "active" ? (
+                    <p>
+                      {room.ends_at
+                        ? `Live now · ends ${relativeTimeText(room.ends_at)}`
+                        : room.starts_at
+                          ? `Live now · started ${relativeTimeText(room.starts_at)}`
+                          : "Live now"}
+                    </p>
+                  ) : null}
+                  {recentTab === "lobby" ? (
+                    <p>
+                      {room.starts_at
+                        ? `Starts ${relativeTimeText(room.starts_at)}`
+                        : "Upcoming · waiting for host to start"}
+                    </p>
+                  ) : null}
+                  {recentTab === "ended" ? (
+                    <p>
+                      Performance: {room.my_solved_count} solved
+                      {room.my_rank ? ` · rank #${room.my_rank}` : ""}
+                    </p>
+                  ) : null}
                   <p>Joined: {prettyDateTime(room.joined_at)}</p>
-                  <p>
-                    Performance: {room.my_solved_count} solved
-                    {room.my_rank ? ` · rank #${room.my_rank}` : ""}
-                  </p>
                 </div>
                 <Link
                   href={roomHref(room.room_code, room.status)}
-                  className="mt-4 inline-flex rounded-lg bg-cyan-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                  className="mt-4 inline-flex rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300"
                 >
                   Open Room
                 </Link>
               </article>
             ))}
           </div>
+        ) : hasAnyRecentRoom ? (
+          <p className="text-sm text-slate-300">
+            No{" "}
+            {recentTab === "active"
+              ? "active"
+              : recentTab === "lobby"
+                ? "upcoming"
+                : "ended"}{" "}
+            rooms right now.
+          </p>
         ) : (
           <p className="text-sm text-slate-300">No recent rooms yet.</p>
         )}

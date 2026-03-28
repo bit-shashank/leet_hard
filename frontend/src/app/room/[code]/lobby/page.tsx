@@ -10,7 +10,8 @@ import { DateTimeInput, NumberStepperInput } from "@/components/input-controls";
 import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { ShareCopyButton } from "@/components/share-copy-button";
 import { SectionCard } from "@/components/section-card";
-import { ApiError, getRoomState, updateRoomSettings } from "@/lib/api";
+import { ApiError, getRoomState, leaveRoom, updateRoomSettings } from "@/lib/api";
+import { saveFlashNotice } from "@/lib/auth-intent";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
@@ -70,6 +71,7 @@ export default function LobbyPage() {
   const [state, setState] = useState<RoomStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
@@ -190,7 +192,7 @@ export default function LobbyPage() {
     setSaving(true);
     setError(null);
     try {
-      await updateRoomSettings(
+      const response = await updateRoomSettings(
         roomCode,
         accessToken,
         {
@@ -208,7 +210,18 @@ export default function LobbyPage() {
           },
         },
       );
-      setFormLoadedForRoom(null);
+      setState((prev) => (prev ? { ...prev, room: response.room } : prev));
+      setRoomTitle(response.room.room_title);
+      setProblemSource(response.room.problem_source);
+      setEasyCount(response.room.easy_count);
+      setMediumCount(response.room.medium_count);
+      setHardCount(response.room.hard_count);
+      setExcludePreSolved(response.room.exclude_pre_solved);
+      setStrictCheck(response.room.strict_check);
+      setDurationMinutes(response.room.duration_minutes);
+      setStartAtLocal(toLocalDateTimeValue(new Date(response.room.scheduled_start_at)));
+      setPasscode("");
+      setFormLoadedForRoom(response.room.id);
       await fetchState();
     } catch (err) {
       setError(parseApiError(err));
@@ -241,6 +254,27 @@ export default function LobbyPage() {
       window.setTimeout(() => setShareCopied(false), 1600);
     } catch {
       setError("Could not copy invite. Please try again.");
+    }
+  }
+
+  async function handleLeaveRoom() {
+    if (!accessToken || !state?.my_participant_id || isHost || leaving) return;
+
+    const confirmed = window.confirm(
+      "Leave this room? You can rejoin later if the room is still in lobby.",
+    );
+    if (!confirmed) return;
+
+    setLeaving(true);
+    setError(null);
+    try {
+      await leaveRoom(roomCode, accessToken);
+      saveFlashNotice(`You left room ${roomCode}.`);
+      router.replace("/");
+    } catch (err) {
+      setError(parseApiError(err));
+    } finally {
+      setLeaving(false);
     }
   }
 
@@ -287,6 +321,16 @@ export default function LobbyPage() {
               >
                 Back Home
               </Link>
+              {state?.my_participant_id && !isHost ? (
+                <button
+                  type="button"
+                  disabled={leaving}
+                  onClick={() => void handleLeaveRoom()}
+                  className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {leaving ? "Leaving..." : "Leave Room"}
+                </button>
+              ) : null}
               <ShareCopyButton
                 copied={shareCopied}
                 onClick={() => void handleShareRoom()}

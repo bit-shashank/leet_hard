@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -971,6 +971,44 @@ def join_room(
         room=_room_to_public(room),
         participant=_participant_to_public(participant),
     )
+
+
+@router.delete('/{room_code}/leave', status_code=status.HTTP_204_NO_CONTENT)
+def leave_room(
+    room_code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = _get_room_or_404(db, room_code)
+    participant = _get_participant_for_user(db, room, current_user.id, required=True)
+
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
+
+    if participant.is_host:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Host cannot leave this room',
+        )
+
+    room_dirty = False
+    if _maybe_auto_start_room(db, room):
+        room_dirty = True
+    if _update_room_status_if_expired(room):
+        room_dirty = True
+    if room_dirty:
+        db.commit()
+        db.refresh(room)
+
+    if room.status != RoomStatus.LOBBY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='You can leave only before the room starts',
+        )
+
+    db.delete(participant)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch('/{room_code}/settings', response_model=UpdateRoomSettingsResponse)

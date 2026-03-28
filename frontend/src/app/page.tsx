@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -27,6 +28,7 @@ import { copyRoomShareMessage } from "@/lib/share-room";
 import type { DashboardResponse, DiscoverRoomResponse, ProblemSource } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
+const CONTINUE_ROOM_LIMIT = 4;
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -127,7 +129,7 @@ function joinButtonLabel({
   room: DiscoverRoomResponse;
 }) {
   if (!user) return "Sign in";
-  if (alreadyJoined) return "Joined";
+  if (alreadyJoined) return "Open Room";
   if (isJoining) return "Joining...";
   if (room.status === "ended") return "Ended";
   if (!room.joinable) return "Full";
@@ -247,6 +249,47 @@ export default function HomePage() {
     () => new Map(discoverRooms.map((room) => [room.room_code.toUpperCase(), room])),
     [discoverRooms],
   );
+  const continueRooms = useMemo(() => {
+    const actionable = (dashboard?.recent_rooms || [])
+      .map((room) => {
+        const discover = discoverByCode.get(room.room_code.toUpperCase());
+        const status = discover?.status || room.status;
+        return { room, status, discover };
+      })
+      .filter((item) => item.status === "active" || item.status === "lobby");
+
+    actionable.sort((a, b) => {
+      const statusOrder = (status: "active" | "lobby" | "ended") => {
+        if (status === "active") return 0;
+        if (status === "lobby") return 1;
+        return 2;
+      };
+      const statusDiff = statusOrder(a.status) - statusOrder(b.status);
+      if (statusDiff !== 0) return statusDiff;
+
+      if (a.status === "active" && b.status === "active") {
+        const aEndsAt = new Date(a.discover?.ends_at || a.room.ends_at || "").getTime();
+        const bEndsAt = new Date(b.discover?.ends_at || b.room.ends_at || "").getTime();
+        const hasAEnd = Number.isFinite(aEndsAt);
+        const hasBEnd = Number.isFinite(bEndsAt);
+        if (hasAEnd && hasBEnd) return aEndsAt - bEndsAt;
+        if (hasAEnd) return -1;
+        if (hasBEnd) return 1;
+      }
+
+      const aStartsAt = new Date(a.discover?.scheduled_start_at || a.room.starts_at || "").getTime();
+      const bStartsAt = new Date(b.discover?.scheduled_start_at || b.room.starts_at || "").getTime();
+      const hasAStart = Number.isFinite(aStartsAt);
+      const hasBStart = Number.isFinite(bStartsAt);
+      if (hasAStart && hasBStart) return aStartsAt - bStartsAt;
+      if (hasAStart) return -1;
+      if (hasBStart) return 1;
+
+      return new Date(b.room.joined_at).getTime() - new Date(a.room.joined_at).getTime();
+    });
+
+    return actionable.slice(0, CONTINUE_ROOM_LIMIT);
+  }, [dashboard?.recent_rooms, discoverByCode]);
   const activeRoomCount = useMemo(
     () => discoverRooms.filter((room) => room.status === "active").length,
     [discoverRooms],
@@ -517,8 +560,6 @@ export default function HomePage() {
 
   async function handleRoomCardJoin(room: DiscoverRoomResponse, alreadyJoined: boolean) {
     const normalizedCode = room.room_code.toUpperCase();
-    if (alreadyJoined && user) return;
-    if (!room.joinable && user) return;
     if (joiningRoomCode === normalizedCode) return;
 
     if (!user || !accessToken) {
@@ -531,6 +572,13 @@ export default function HomePage() {
       router.push("/getting-started");
       return;
     }
+
+    if (alreadyJoined) {
+      router.push(roomHref(normalizedCode, room.status));
+      return;
+    }
+
+    if (!room.joinable) return;
 
     if (room.has_passcode) {
       setRoomCode(room.room_code);
@@ -690,6 +738,87 @@ export default function HomePage() {
         </div>
       </section>
 
+      {user && !onboardingRequired ? (
+        <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-100">Continue Racing</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Your live and upcoming joined rooms, trimmed for quick continuation.
+              </p>
+            </div>
+            <Link
+              href="/dashboard"
+              className="rounded-lg border border-slate-500/60 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
+            >
+              View All
+            </Link>
+          </div>
+
+          {dashboardLoading ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <RecentRoomSkeletonCard key={`recent-room-skeleton-${index}`} />
+              ))}
+            </div>
+          ) : continueRooms.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {continueRooms.map(({ room, status, discover }) => {
+                const timingText =
+                  status === "active"
+                    ? room.ends_at
+                      ? `Live now · ends ${relativeTimeText(room.ends_at)}`
+                      : "Live now"
+                    : discover?.scheduled_start_at
+                      ? `Starts ${relativeTimeText(discover.scheduled_start_at)}`
+                      : "Starts soon";
+                return (
+                  <article
+                    key={`${room.room_code}-${room.joined_at}`}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold tracking-tight text-slate-100">
+                          {room.room_title}
+                        </h3>
+                        <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
+                          {room.room_code}
+                        </p>
+                      </div>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(status)}`}
+                      >
+                        {status}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 space-y-1 text-xs text-slate-300">
+                      <p>{timingText}</p>
+                      <p>
+                        Joined: {prettyDateTime(room.joined_at)}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => router.push(roomHref(room.room_code, status))}
+                      className="mt-4 rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300"
+                    >
+                      Open Room
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-300">
+              No ongoing joined rooms right now. Join one from Top Rooms above.
+            </p>
+          )}
+        </section>
+      ) : null}
+
       <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -719,7 +848,7 @@ export default function HomePage() {
               const alreadyJoined = user ? recentRoomCodeSet.has(room.room_code.toUpperCase()) : false;
               const isJoiningThisRoom = joiningRoomCode === room.room_code.toUpperCase();
               const joinDisabled = user
-                ? alreadyJoined || isJoiningThisRoom || room.status === "ended" || !room.joinable
+                ? isJoiningThisRoom || (!alreadyJoined && (room.status === "ended" || !room.joinable))
                 : false;
               const label = joinButtonLabel({
                 user,
@@ -755,7 +884,7 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-300 sm:grid-cols-2">
                     <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-1.5">
                       {roomTimingText(room)}
                     </div>
@@ -781,7 +910,7 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between gap-3">
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-xs text-slate-400">
                       {alreadyJoined
                         ? "You already joined this room."
@@ -793,7 +922,7 @@ export default function HomePage() {
                       type="button"
                       disabled={joinDisabled}
                       onClick={() => void handleRoomCardJoin(room, alreadyJoined)}
-                      className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                     >
                       {label}
                     </button>
@@ -806,74 +935,6 @@ export default function HomePage() {
           <p className="text-sm text-slate-300">No lobby or active rooms right now.</p>
         )}
       </section>
-
-      {user && !onboardingRequired ? (
-        <section className="mb-6 rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6 shadow-xl shadow-slate-950/40 backdrop-blur">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-100">Resume My Rooms</h2>
-              <p className="mt-1 text-sm text-slate-300">
-                Quick-jump links from your authenticated room history.
-              </p>
-            </div>
-          </div>
-
-          {dashboardLoading ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <RecentRoomSkeletonCard key={`recent-room-skeleton-${index}`} />
-              ))}
-            </div>
-          ) : dashboard?.recent_rooms.length ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {dashboard.recent_rooms.map((room) => {
-                const discover = discoverByCode.get(room.room_code.toUpperCase());
-                const status = discover?.status || room.status;
-                return (
-                  <article
-                    key={`${room.room_code}-${room.joined_at}`}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold tracking-tight text-slate-100">
-                          {room.room_title}
-                        </h3>
-                        <p className="mt-1 font-mono text-xs uppercase tracking-wide text-slate-400">
-                          {room.room_code}
-                        </p>
-                      </div>
-                      <span
-                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(status)}`}
-                      >
-                        {status}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 space-y-1 text-xs text-slate-300">
-                      <p>Joined: {prettyDateTime(room.joined_at)}</p>
-                      <p>
-                        My Stats: {room.my_solved_count} solved
-                        {room.my_rank ? ` · rank #${room.my_rank}` : ""}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => router.push(roomHref(room.room_code, status))}
-                      className="mt-4 rounded-lg bg-cyan-400 px-3 py-1.5 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
-                    >
-                      Open Room
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-300">No joined rooms yet.</p>
-          )}
-        </section>
-      ) : null}
 
       <section
         ref={createSectionRef}

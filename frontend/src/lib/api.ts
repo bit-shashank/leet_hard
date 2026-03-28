@@ -96,6 +96,13 @@ export function joinRoom(roomCode: string, payload: JoinRoomRequest, accessToken
   });
 }
 
+export function leaveRoom(roomCode: string, accessToken: string) {
+  return request<void>(`/api/v1/rooms/${roomCode}/leave`, {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
 export function startRoom(roomCode: string, accessToken: string) {
   return request<{ room: RoomStateResponse["room"] }>(
     `/api/v1/rooms/${roomCode}/start`,

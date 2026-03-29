@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -7,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, case, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app import auth
@@ -64,6 +65,7 @@ from app.services.leetcode import (
 )
 
 router = APIRouter(prefix='/rooms', tags=['rooms'])
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -1369,27 +1371,41 @@ def stream_room_state(
     async def event_stream():
         last_payload = None
         last_ping = time.monotonic()
+        db_backoff_seconds = 1.0
         try:
             while True:
                 await asyncio.sleep(2)
-                with SessionLocal() as session:
-                    active_room = session.scalar(
-                        select(Room).where(Room.room_code == normalized_code)
-                    )
-                    if not active_room or active_room.status != RoomStatus.ACTIVE:
-                        print(f'[state-sse] room inactive or missing: {normalized_code}')
-                        break
-                    active_participant = session.scalar(
-                        select(Participant).where(
-                            Participant.room_id == active_room.id,
-                            Participant.user_id == user_id,
+                try:
+                    with SessionLocal() as session:
+                        active_room = session.scalar(
+                            select(Room).where(Room.room_code == normalized_code)
                         )
+                        if not active_room or active_room.status != RoomStatus.ACTIVE:
+                            print(f'[state-sse] room inactive or missing: {normalized_code}')
+                            break
+                        active_participant = session.scalar(
+                            select(Participant).where(
+                                Participant.room_id == active_room.id,
+                                Participant.user_id == user_id,
+                            )
+                        )
+                        if not active_participant:
+                            print(f'[state-sse] participant missing: {normalized_code} user={user_id}')
+                            break
+                        state = _build_room_live_state(session, active_room, active_participant)
+                        data = state.model_dump(mode='json')
+                    db_backoff_seconds = 1.0
+                except OperationalError as exc:
+                    logger.warning(
+                        '[state-sse] transient db error room=%s user=%s: %s',
+                        normalized_code,
+                        user_id,
+                        exc,
                     )
-                    if not active_participant:
-                        print(f'[state-sse] participant missing: {normalized_code} user={user_id}')
-                        break
-                    state = _build_room_live_state(session, active_room, active_participant)
-                    data = state.model_dump(mode='json')
+                    yield ': db-temporary-error\\n\\n'
+                    await asyncio.sleep(db_backoff_seconds)
+                    db_backoff_seconds = min(db_backoff_seconds * 2, 15.0)
+                    continue
 
                 payload = json.dumps(data, sort_keys=True)
                 compare_data = dict(data)
@@ -1617,21 +1633,34 @@ def stream_room_feed(
     async def event_stream():
         last_cursor = cursor
         last_ping = time.monotonic()
+        db_backoff_seconds = 1.0
         try:
             while True:
                 await asyncio.sleep(1)
-                with SessionLocal() as session:
-                    active_room = session.scalar(
-                        select(Room).where(Room.room_code == normalized_code)
+                try:
+                    with SessionLocal() as session:
+                        active_room = session.scalar(
+                            select(Room).where(Room.room_code == normalized_code)
+                        )
+                        if not active_room or active_room.status != RoomStatus.ACTIVE:
+                            break
+                        events, next_cursor = _query_feed_events(
+                            session,
+                            active_room,
+                            last_cursor,
+                            limit,
+                        )
+                    db_backoff_seconds = 1.0
+                except OperationalError as exc:
+                    logger.warning(
+                        '[feed-sse] transient db error room=%s: %s',
+                        normalized_code,
+                        exc,
                     )
-                    if not active_room or active_room.status != RoomStatus.ACTIVE:
-                        break
-                    events, next_cursor = _query_feed_events(
-                        session,
-                        active_room,
-                        last_cursor,
-                        limit,
-                    )
+                    yield ': db-temporary-error\\n\\n'
+                    await asyncio.sleep(db_backoff_seconds)
+                    db_backoff_seconds = min(db_backoff_seconds * 2, 15.0)
+                    continue
 
                 if events:
                     for event in events:

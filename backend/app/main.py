@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from app.config import get_settings
 from app.db import engine, normalized_database_url
@@ -34,6 +36,14 @@ app.add_middleware(
 @app.get('/health')
 def health_check():
     return {'ok': True}
+
+
+@app.exception_handler(OperationalError)
+async def handle_db_operational_error(_: Request, __: OperationalError):
+    return JSONResponse(
+        status_code=503,
+        content={'detail': 'Database temporarily unavailable. Please retry in a moment.'},
+    )
 
 
 app.include_router(rooms_router, prefix='/api/v1')

@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
@@ -7,6 +8,7 @@ from sqlalchemy.pool import NullPool
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 def _normalize_database_url(database_url: str) -> str:
     url = database_url.strip()
@@ -33,6 +35,7 @@ def _normalize_database_url(database_url: str) -> str:
 normalized_database_url = _normalize_database_url(settings.database_url)
 parsed_database_url = urlparse(normalized_database_url)
 database_hostname = parsed_database_url.hostname or ''
+database_port = parsed_database_url.port
 
 connect_args = {}
 engine_kwargs = {'future': True}
@@ -40,6 +43,7 @@ engine_kwargs = {'future': True}
 if normalized_database_url.startswith('sqlite'):
     connect_args = {'check_same_thread': False}
 else:
+    using_null_pool = False
     engine_kwargs.update(
         {
             'pool_pre_ping': True,
@@ -53,6 +57,7 @@ else:
         and database_hostname.endswith('pooler.supabase.com')
     ):
         engine_kwargs['poolclass'] = NullPool
+        using_null_pool = True
     else:
         engine_kwargs.update(
             {
@@ -61,6 +66,22 @@ else:
                 'pool_timeout': max(1, settings.db_pool_timeout_seconds),
             }
         )
+
+    if database_hostname.endswith('pooler.supabase.com') and database_port == 5432:
+        logger.warning(
+            'Database host is Supabase Session Pooler (%s:%s). '
+            'If you hit MaxClientsInSessionMode, switch DATABASE_URL to Supabase Transaction Pooler (port 6543) '
+            'or a direct DB host, and keep app pool conservative.',
+            database_hostname,
+            database_port,
+        )
+
+    logger.info(
+        'Database engine configured (host=%s, port=%s, pool=%s)',
+        database_hostname,
+        database_port,
+        'NullPool' if using_null_pool else 'QueuePool',
+    )
 
 engine = create_engine(normalized_database_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

@@ -79,6 +79,7 @@ Notes:
 - `CORS_ORIGIN_REGEX` supports preview domains without updating env on every preview deploy.
 - Avoid `CORS_ORIGINS=*` in production when auth headers/cookies are involved.
 - Keep DB pool env conservative on Render to avoid exhausting Supabase connection limits.
+- Live room updates are polling-only (`/state` every ~5s, `/feed` every ~4s). SSE stream routes are intentionally removed.
 - After first deploy, copy your Render backend URL (example: `https://<backend-name>.onrender.com`).
 
 ## 3) Deploy Frontend on Vercel
@@ -176,7 +177,7 @@ Fix:
   - `DB_POOL_TIMEOUT_SECONDS=30`
   - `DB_USE_NULL_POOL_FOR_SUPABASE_POOLER=true`
 - Redeploy backend so new pool settings apply.
-- If still saturated, switch `DATABASE_URL` to a less constrained endpoint (for example, Supabase transaction pooler URL) and redeploy.
+- If still saturated, switch `DATABASE_URL` to Supabase transaction pooler (`pooler.supabase.com:6543`) and redeploy.
 
 ### `ERR_CONNECTION_REFUSED` from frontend to backend
 

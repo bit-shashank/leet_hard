@@ -67,21 +67,6 @@ export type RoomStateResponse = {
   server_time: string;
 };
 
-export type RoomLiveRoomPublic = {
-  status: RoomStatus;
-  starts_at: string | null;
-  ends_at: string | null;
-  duration_minutes: number;
-  sync_warning: string | null;
-};
-
-export type RoomLiveState = {
-  room: RoomLiveRoomPublic;
-  leaderboard: LeaderboardEntry[];
-  my_solved_slugs: string[];
-  server_time: string;
-};
-
 export type CreateRoomRequest = {
   room_title: string;
   settings: {

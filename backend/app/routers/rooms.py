@@ -1,19 +1,14 @@
-import asyncio
-import json
-import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, case, func, or_, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import auth
 from app.config import get_settings
-from app.db import SessionLocal, get_db
+from app.db import get_db
 from app.models import (
     Participant,
     ParticipantSolve,
@@ -45,8 +40,6 @@ from app.schemas import (
     ProblemPublic,
     RoomFeedEventPublic,
     RoomFeedResponse,
-    RoomLiveRoomPublic,
-    RoomLiveState,
     RoomPublic,
     RoomStateResponse,
     StartRoomResponse,
@@ -65,7 +58,6 @@ from app.services.leetcode import (
 )
 
 router = APIRouter(prefix='/rooms', tags=['rooms'])
-logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -151,16 +143,6 @@ def _room_to_public(room: Room) -> RoomPublic:
         has_passcode=bool(room.passcode_hash),
         sync_warning=room.sync_warning,
         topic_slugs=room.topic_slugs or [],
-    )
-
-
-def _room_to_live_public(room: Room) -> RoomLiveRoomPublic:
-    return RoomLiveRoomPublic(
-        status=room.status,
-        starts_at=_coerce_utc(room.starts_at),
-        ends_at=_coerce_utc(room.ends_at),
-        duration_minutes=room.duration_minutes,
-        sync_warning=room.sync_warning,
     )
 
 
@@ -824,28 +806,6 @@ def _build_room_state(
     )
 
 
-def _build_room_live_state(
-    db: Session,
-    room: Room,
-    participant: Optional[Participant],
-) -> RoomLiveState:
-    my_solved_slugs: list[str] = []
-    if participant is not None:
-        my_solved_slugs = db.scalars(
-            select(ParticipantSolve.problem_slug).where(
-                ParticipantSolve.room_id == room.id,
-                ParticipantSolve.participant_id == participant.id,
-            )
-        ).all()
-
-    return RoomLiveState(
-        room=_room_to_live_public(room),
-        leaderboard=_build_leaderboard(db, room),
-        my_solved_slugs=my_solved_slugs,
-        server_time=_utcnow(),
-    )
-
-
 def _parse_status_filters(statuses: str) -> list[RoomStatus]:
     values = [value.strip().lower() for value in statuses.split(',') if value.strip()]
     if not values:
@@ -1347,91 +1307,6 @@ def get_room_state(
     return _build_room_state(db, room, participant)
 
 
-@router.get('/{room_code}/state/stream')
-def stream_room_state(
-    room_code: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    room = _get_room_or_404(db, room_code)
-    participant = _get_participant_for_user(db, room, current_user.id, required=True)
-    if not participant:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
-
-    _require_active_room(db, room)
-    if room.status != RoomStatus.ACTIVE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Live state is available only for active rooms',
-        )
-
-    normalized_code = room.room_code
-    user_id = current_user.id
-
-    async def event_stream():
-        last_payload = None
-        last_ping = time.monotonic()
-        db_backoff_seconds = 1.0
-        try:
-            while True:
-                await asyncio.sleep(2)
-                try:
-                    with SessionLocal() as session:
-                        active_room = session.scalar(
-                            select(Room).where(Room.room_code == normalized_code)
-                        )
-                        if not active_room or active_room.status != RoomStatus.ACTIVE:
-                            print(f'[state-sse] room inactive or missing: {normalized_code}')
-                            break
-                        active_participant = session.scalar(
-                            select(Participant).where(
-                                Participant.room_id == active_room.id,
-                                Participant.user_id == user_id,
-                            )
-                        )
-                        if not active_participant:
-                            print(f'[state-sse] participant missing: {normalized_code} user={user_id}')
-                            break
-                        state = _build_room_live_state(session, active_room, active_participant)
-                        data = state.model_dump(mode='json')
-                    db_backoff_seconds = 1.0
-                except OperationalError as exc:
-                    logger.warning(
-                        '[state-sse] transient db error room=%s user=%s: %s',
-                        normalized_code,
-                        user_id,
-                        exc,
-                    )
-                    yield ': db-temporary-error\\n\\n'
-                    await asyncio.sleep(db_backoff_seconds)
-                    db_backoff_seconds = min(db_backoff_seconds * 2, 15.0)
-                    continue
-
-                payload = json.dumps(data, sort_keys=True)
-                compare_data = dict(data)
-                compare_data.pop('server_time', None)
-                compare_payload = json.dumps(compare_data, sort_keys=True)
-
-                if compare_payload != last_payload:
-                    print(f'[state-sse] emit {normalized_code} size={len(payload)}')
-                    yield f'event: state\\ndata: {payload}\\n\\n'
-                    last_payload = compare_payload
-
-                now = time.monotonic()
-                if now - last_ping >= 15:
-                    print(f'[state-sse] keep-alive {normalized_code}')
-                    yield ': keep-alive\\n\\n'
-                    last_ping = now
-        except asyncio.CancelledError:
-            return
-
-    headers = {
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no',
-    }
-    return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
-
-
 @router.post('/{room_code}/solves/manual', response_model=ManualSolveResponse)
 def toggle_manual_solve(
     room_code: str,
@@ -1611,79 +1486,6 @@ def get_room_feed(
         items=[_feed_event_to_public(event) for event in events],
         next_cursor=next_cursor,
     )
-
-
-@router.get('/{room_code}/feed/stream')
-def stream_room_feed(
-    room_code: str,
-    cursor: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    room = _get_room_or_404(db, room_code)
-    participant = _get_participant_for_user(db, room, current_user.id, required=True)
-    if not participant:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not a participant in this room')
-
-    _require_active_room(db, room)
-    _parse_feed_cursor(cursor)
-    normalized_code = room.room_code
-
-    async def event_stream():
-        last_cursor = cursor
-        last_ping = time.monotonic()
-        db_backoff_seconds = 1.0
-        try:
-            while True:
-                await asyncio.sleep(1)
-                try:
-                    with SessionLocal() as session:
-                        active_room = session.scalar(
-                            select(Room).where(Room.room_code == normalized_code)
-                        )
-                        if not active_room or active_room.status != RoomStatus.ACTIVE:
-                            break
-                        events, next_cursor = _query_feed_events(
-                            session,
-                            active_room,
-                            last_cursor,
-                            limit,
-                        )
-                    db_backoff_seconds = 1.0
-                except OperationalError as exc:
-                    logger.warning(
-                        '[feed-sse] transient db error room=%s: %s',
-                        normalized_code,
-                        exc,
-                    )
-                    yield ': db-temporary-error\\n\\n'
-                    await asyncio.sleep(db_backoff_seconds)
-                    db_backoff_seconds = min(db_backoff_seconds * 2, 15.0)
-                    continue
-
-                if events:
-                    for event in events:
-                        payload = json.dumps(
-                            _feed_event_to_public(event).model_dump(mode='json')
-                        )
-                        print(f'[feed-sse] emit {normalized_code} id={event.id}')
-                        yield f'event: feed\\ndata: {payload}\\n\\n'
-                    last_cursor = next_cursor
-
-                now = time.monotonic()
-                if now - last_ping >= 15:
-                    print(f'[feed-sse] keep-alive {normalized_code}')
-                    yield ': keep-alive\\n\\n'
-                    last_ping = now
-        except asyncio.CancelledError:
-            return
-
-    headers = {
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no',
-    }
-    return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
 
 
 @router.get('/{room_code}/history', response_model=HistoryResponse)

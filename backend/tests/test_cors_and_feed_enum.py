@@ -33,6 +33,12 @@ async def _preflight(path: str, method: str, origin: str) -> httpx.Response:
         )
 
 
+async def _get(path: str, origin: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url='http://testserver') as client:
+        return await client.get(path, headers={'Origin': origin})
+
+
 def test_cors_preflight_allows_explicit_origin_for_join():
     response = asyncio.run(
         _preflight(
@@ -50,8 +56,8 @@ def test_cors_preflight_allows_explicit_origin_for_join():
     'path,method',
     [
         ('/api/v1/rooms/ABCD/join', 'POST'),
-        ('/api/v1/rooms/ABCD/state/stream', 'GET'),
-        ('/api/v1/rooms/ABCD/feed/stream', 'GET'),
+        ('/api/v1/rooms/ABCD/state', 'GET'),
+        ('/api/v1/rooms/ABCD/feed', 'GET'),
     ],
 )
 def test_cors_preflight_allows_vercel_preview_origin(path: str, method: str):
@@ -72,6 +78,18 @@ def test_cors_preflight_blocks_disallowed_origin():
     )
     assert response.status_code == 400
     assert response.headers.get('access-control-allow-origin') is None
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '/api/v1/rooms/ABCD/state/stream',
+        '/api/v1/rooms/ABCD/feed/stream',
+    ],
+)
+def test_removed_stream_endpoints_return_404(path: str):
+    response = asyncio.run(_get(path, 'https://leet-hard.vercel.app'))
+    assert response.status_code == 404
 
 
 def test_room_feed_source_enum_uses_lowercase_values():

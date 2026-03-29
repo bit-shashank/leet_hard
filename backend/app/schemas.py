@@ -170,21 +170,6 @@ class RoomStateResponse(BaseModel):
     server_time: datetime
 
 
-class RoomLiveRoomPublic(BaseModel):
-    status: RoomStatus
-    starts_at: Optional[datetime]
-    ends_at: Optional[datetime]
-    duration_minutes: int
-    sync_warning: Optional[str]
-
-
-class RoomLiveState(BaseModel):
-    room: RoomLiveRoomPublic
-    leaderboard: List[LeaderboardEntry]
-    my_solved_slugs: List[str]
-    server_time: datetime
-
-
 class CreateRoomResponse(BaseModel):
     room: RoomPublic
     participant: ParticipantPublic

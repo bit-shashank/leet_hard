@@ -9,16 +9,15 @@ import { AvatarBadge } from "@/components/avatar-badge";
 import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonRow, SkeletonText } from "@/components/loading";
 import { SectionCard } from "@/components/section-card";
 import { ShareCopyButton } from "@/components/share-copy-button";
-import { ApiError, API_BASE, getRoomFeed, getRoomState, sendRoomMessage, toggleManualSolve } from "@/lib/api";
+import { ApiError, getRoomFeed, getRoomState, sendRoomMessage, toggleManualSolve } from "@/lib/api";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
 import { copyRoomShareMessage } from "@/lib/share-room";
-import type { ProblemPublic, RoomFeedEvent, RoomLiveState, RoomStateResponse } from "@/lib/types";
+import type { ProblemPublic, RoomFeedEvent, RoomStateResponse } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 5000;
-const STATE_FALLBACK_POLL_INTERVAL_MS = 10000;
-const FEED_POLL_INTERVAL_MS = 12000;
+const STATE_POLL_INTERVAL_MS = 5000;
+const FEED_POLL_INTERVAL_MS = 4000;
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -78,11 +77,6 @@ export default function ActiveRoomPage() {
   const [feedError, setFeedError] = useState<string | null>(null);
   const [chatMessage, setChatMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [stateStreamConnected, setStateStreamConnected] = useState(false);
-  const [stateStreamWarning, setStateStreamWarning] = useState<string | null>(null);
-  const [feedStreamConnected, setFeedStreamConnected] = useState(false);
-  const [lastStateEventAt, setLastStateEventAt] = useState<number | null>(null);
-  const [lastFeedEventAt, setLastFeedEventAt] = useState<number | null>(null);
   const [rightPaneTab, setRightPaneTab] = useState<"feed" | "leaderboard">("feed");
   const feedCursorRef = useRef<string | null>(null);
   const feedContainerRef = useRef<HTMLDivElement | null>(null);
@@ -123,27 +117,19 @@ export default function ActiveRoomPage() {
     }
   }, [accessToken, roomCode, router]);
 
-  const roomStatus = state?.room.status ?? "unknown";
-
   useEffect(() => {
     if (!accessToken) {
       setLoading(false);
       return;
     }
 
-    const isActive = roomStatus === "active";
-    const isStale = !lastStateEventAt || Date.now() - lastStateEventAt > 15000;
-    const shouldPoll = !isActive || !stateStreamConnected || isStale;
-    if (!shouldPoll) return;
-
     void fetchState();
-    const intervalMs = isActive ? STATE_FALLBACK_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const timer = setInterval(() => {
       void fetchState();
-    }, intervalMs);
+    }, STATE_POLL_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [accessToken, fetchState, roomStatus, stateStreamConnected, lastStateEventAt]);
+  }, [accessToken, fetchState]);
 
   const solvedSet = useMemo(() => new Set(state?.my_solved_slugs ?? []), [state?.my_solved_slugs]);
   const canManuallySolve = Boolean(state?.my_participant_id);
@@ -157,23 +143,6 @@ export default function ActiveRoomPage() {
     const virtualServerNow = new Date(nowMs + serverOffsetMs).toISOString();
     return formatCountdown(state.room.ends_at, virtualServerNow);
   }, [nowMs, serverOffsetMs, state?.room.ends_at]);
-
-  const applyLiveState = useCallback((live: RoomLiveState) => {
-    setState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        room: {
-          ...prev.room,
-          ...live.room,
-        },
-        leaderboard: live.leaderboard,
-        my_solved_slugs: live.my_solved_slugs,
-        server_time: live.server_time,
-      };
-    });
-    setServerOffsetMs(new Date(live.server_time).getTime() - Date.now());
-  }, []);
 
   useEffect(() => {
     if (!state?.room) return;
@@ -193,93 +162,6 @@ export default function ActiveRoomPage() {
     const label = countdown === "00:00:00" ? "Ending" : `${countdown} left`;
     document.title = `${label} · ${roomLabel}`;
   }, [countdown, roomCode, state?.room]);
-
-  useEffect(() => {
-    if (!accessToken || !roomCode || state?.room.status !== "active") {
-      setStateStreamConnected(false);
-      setStateStreamWarning(null);
-      return;
-    }
-    if (!canManuallySolve) return;
-
-    let cancelled = false;
-    let backoff = 1000;
-    let controller: AbortController | null = null;
-
-    const startStream = async () => {
-      while (!cancelled) {
-        const url = new URL(`${API_BASE}/api/v1/rooms/${roomCode}/state/stream`);
-        controller = new AbortController();
-        try {
-          const response = await fetch(url.toString(), {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Accept: "text/event-stream",
-            },
-            signal: controller.signal,
-          });
-
-          if (!response.ok || !response.body) {
-            throw new Error(`Stream error (${response.status})`);
-          }
-
-          setStateStreamWarning(null);
-          backoff = 1000;
-          console.debug("[state-sse] connected", { roomCode });
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (!cancelled) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            buffer = buffer.replace(/\r/g, "");
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop() ?? "";
-            for (const part of parts) {
-              if (!part.trim() || part.startsWith(":")) continue;
-              const lines = part.split("\n");
-              const dataLines = lines
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.replace(/^data:\s?/, ""));
-              if (!dataLines.length) continue;
-              try {
-                const payload = JSON.parse(dataLines.join("\n")) as RoomLiveState;
-                console.debug("[state-sse] event", {
-                  roomCode,
-                  status: payload.room.status,
-                  ends_at: payload.room.ends_at,
-                  leaderboard: payload.leaderboard.length,
-                  my_solved: payload.my_solved_slugs.length,
-                });
-                setLastStateEventAt(Date.now());
-                setStateStreamConnected(true);
-                applyLiveState(payload);
-              } catch {
-                console.debug("[state-sse] parse-error", dataLines.join("\n").slice(0, 200));
-              }
-            }
-          }
-        } catch (err) {
-          if (cancelled) break;
-          console.debug("[state-sse] error", err);
-          setStateStreamConnected(false);
-          setStateStreamWarning("Live updates disconnected. Falling back to slower refresh...");
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          backoff = Math.min(backoff * 2, 15000);
-        }
-      }
-    };
-
-    void startStream();
-    return () => {
-      cancelled = true;
-      controller?.abort();
-      setStateStreamConnected(false);
-    };
-  }, [accessToken, roomCode, state?.room.status, canManuallySolve, applyLiveState]);
 
   const appendFeedEvents = useCallback((incoming: RoomFeedEvent[]) => {
     if (!incoming.length) return;
@@ -330,8 +212,6 @@ export default function ActiveRoomPage() {
 
   useEffect(() => {
     if (!accessToken || !roomCode || !canManuallySolve || state?.room.status !== "active") return;
-    const isStale = !lastFeedEventAt || Date.now() - lastFeedEventAt > 15000;
-    if (feedStreamConnected && !isStale) return;
     let cancelled = false;
 
     const poll = async () => {
@@ -343,7 +223,6 @@ export default function ActiveRoomPage() {
         });
         if (response.items.length) {
           appendFeedEvents(response.items);
-          setLastFeedEventAt(Date.now());
         }
       } catch (err) {
         if (!cancelled) setFeedError(parseFeedError(err));
@@ -362,84 +241,7 @@ export default function ActiveRoomPage() {
     canManuallySolve,
     state?.room.status,
     appendFeedEvents,
-    feedStreamConnected,
-    lastFeedEventAt,
   ]);
-
-  useEffect(() => {
-    if (!accessToken || !roomCode || !canManuallySolve || state?.room.status !== "active") return;
-    let cancelled = false;
-    let backoff = 1000;
-    let controller: AbortController | null = null;
-
-    const startStream = async () => {
-      while (!cancelled) {
-        const cursor = feedCursorRef.current;
-        const url = new URL(`${API_BASE}/api/v1/rooms/${roomCode}/feed/stream`);
-        if (cursor) url.searchParams.set("cursor", cursor);
-
-        controller = new AbortController();
-        try {
-          const response = await fetch(url.toString(), {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Accept: "text/event-stream",
-            },
-            signal: controller.signal,
-          });
-
-          if (!response.ok || !response.body) {
-            throw new Error(`Stream error (${response.status})`);
-          }
-
-          backoff = 1000;
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-          setFeedError(null);
-
-          while (!cancelled) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            buffer = buffer.replace(/\r/g, "");
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop() ?? "";
-            for (const part of parts) {
-              if (!part.trim() || part.startsWith(":")) continue;
-              const lines = part.split("\n");
-              const dataLines = lines
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.replace(/^data:\s?/, ""));
-              if (!dataLines.length) continue;
-              try {
-                const payload = JSON.parse(dataLines.join("\n")) as RoomFeedEvent;
-                console.debug("[feed-sse] event", { roomCode, id: payload.id, type: payload.event_type });
-                setLastFeedEventAt(Date.now());
-                setFeedStreamConnected(true);
-                appendFeedEvents([payload]);
-              } catch {
-                console.debug("[feed-sse] parse-error", dataLines.join("\n").slice(0, 200));
-              }
-            }
-          }
-        } catch (err) {
-          if (cancelled) break;
-          setFeedStreamConnected(false);
-          setFeedError("Live updates disconnected. Reconnecting...");
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          backoff = Math.min(backoff * 2, 15000);
-        }
-      }
-    };
-
-    void startStream();
-    return () => {
-      cancelled = true;
-      controller?.abort();
-      setFeedStreamConnected(false);
-    };
-  }, [accessToken, roomCode, canManuallySolve, state?.room.status, appendFeedEvents]);
 
   async function handleToggle(problem: ProblemPublic) {
     if (!accessToken || !state || !canManuallySolve) return;
@@ -577,12 +379,6 @@ export default function ActiveRoomPage() {
       {state?.room.sync_warning ? (
         <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           {state.room.sync_warning}
-        </div>
-      ) : null}
-
-      {stateStreamWarning ? (
-        <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          {stateStreamWarning}
         </div>
       ) : null}
 

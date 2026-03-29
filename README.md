@@ -71,6 +71,11 @@ Frontend app: `http://localhost:3000`
 - `DATABASE_URL`
   Local example: `sqlite:///./leetcode_room_race.db`
   Prod example: `postgresql+psycopg://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require`
+- `DB_POOL_SIZE` (default `2`)
+- `DB_MAX_OVERFLOW` (default `0`)
+- `DB_POOL_TIMEOUT_SECONDS` (default `30`)
+- `DB_POOL_RECYCLE_SECONDS` (default `300`)
+- `DB_USE_NULL_POOL_FOR_SUPABASE_POOLER` (default `true`)
 - `LEETCODE_API_BASE_URL`
 - `APP_TOKEN_SECRET`
 - `CORS_ORIGINS`

@@ -52,6 +52,11 @@ Set these in Render service env:
 APP_NAME=LeetRace API
 APP_ENV=prod
 DATABASE_URL=postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require
+DB_POOL_SIZE=2
+DB_MAX_OVERFLOW=0
+DB_POOL_TIMEOUT_SECONDS=30
+DB_POOL_RECYCLE_SECONDS=300
+DB_USE_NULL_POOL_FOR_SUPABASE_POOLER=true
 LEETCODE_API_BASE_URL=https://leetcode-api-pied.vercel.app
 APP_TOKEN_SECRET=<long-random-secret>
 CORS_ORIGINS=https://leet-hard.vercel.app,http://localhost:3000
@@ -73,6 +78,7 @@ Notes:
 - `CORS_ORIGINS` accepts comma-separated values.
 - `CORS_ORIGIN_REGEX` supports preview domains without updating env on every preview deploy.
 - Avoid `CORS_ORIGINS=*` in production when auth headers/cookies are involved.
+- Keep DB pool env conservative on Render to avoid exhausting Supabase connection limits.
 - After first deploy, copy your Render backend URL (example: `https://<backend-name>.onrender.com`).
 
 ## 3) Deploy Frontend on Vercel
@@ -158,6 +164,19 @@ Fix:
 - Add production URL(s) to `CORS_ORIGINS`.
 - For previews, set `CORS_ORIGIN_REGEX=https://.*\\.vercel\\.app` (or a tighter project-specific regex).
 - Avoid wildcard `*` when using credentialed/authenticated requests.
+
+### Error: `Max client connections reached` / `MaxClientsInSessionMode`
+
+Cause: app-side pool settings are too high for your Supabase/Render deployment capacity, or the URL points at a constrained pooler endpoint.
+
+Fix:
+- Set backend env:
+  - `DB_POOL_SIZE=2`
+  - `DB_MAX_OVERFLOW=0`
+  - `DB_POOL_TIMEOUT_SECONDS=30`
+  - `DB_USE_NULL_POOL_FOR_SUPABASE_POOLER=true`
+- Redeploy backend so new pool settings apply.
+- If still saturated, switch `DATABASE_URL` to a less constrained endpoint (for example, Supabase transaction pooler URL) and redeploy.
 
 ### `ERR_CONNECTION_REFUSED` from frontend to backend
 

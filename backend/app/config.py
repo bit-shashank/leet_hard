@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     app_env: str = 'dev'
 
     database_url: str = 'sqlite:///./leetcode_room_race.db'
+    db_pool_size: int = 2
+    db_max_overflow: int = 0
+    db_pool_timeout_seconds: int = 30
+    db_pool_recycle_seconds: int = 300
+    db_use_null_pool_for_supabase_pooler: bool = True
     leetcode_api_base_url: str = 'https://leetcode-api-pied.vercel.app'
     app_token_secret: str = 'change-me-in-production'
 

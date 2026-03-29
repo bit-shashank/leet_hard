@@ -2,6 +2,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 
@@ -30,6 +31,8 @@ def _normalize_database_url(database_url: str) -> str:
 
 
 normalized_database_url = _normalize_database_url(settings.database_url)
+parsed_database_url = urlparse(normalized_database_url)
+database_hostname = parsed_database_url.hostname or ''
 
 connect_args = {}
 engine_kwargs = {'future': True}
@@ -40,9 +43,24 @@ else:
     engine_kwargs.update(
         {
             'pool_pre_ping': True,
-            'pool_recycle': 300,
+            'pool_recycle': settings.db_pool_recycle_seconds,
         }
     )
+    # Supabase pooler already provides pooling. Using SQLAlchemy NullPool here avoids
+    # holding extra idle client slots and helps prevent "max clients reached" failures.
+    if (
+        settings.db_use_null_pool_for_supabase_pooler
+        and database_hostname.endswith('pooler.supabase.com')
+    ):
+        engine_kwargs['poolclass'] = NullPool
+    else:
+        engine_kwargs.update(
+            {
+                'pool_size': max(1, settings.db_pool_size),
+                'max_overflow': max(0, settings.db_max_overflow),
+                'pool_timeout': max(1, settings.db_pool_timeout_seconds),
+            }
+        )
 
 engine = create_engine(normalized_database_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

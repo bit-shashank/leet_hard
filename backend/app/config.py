@@ -79,6 +79,10 @@ class Settings(BaseSettings):
                 if origin.strip()
             ]
 
+        frontend_origin = self._normalize_origin(self.frontend_base_url) if self.frontend_base_url else ''
+        if frontend_origin and frontend_origin not in origins and origins != ['*']:
+            origins.append(frontend_origin)
+
         return origins or ['*']
 
 

@@ -234,7 +234,12 @@ class RoomFeedEvent(Base):
         String(36), ForeignKey('participants.id', ondelete='SET NULL'), index=True, nullable=True
     )
     event_type: Mapped[RoomFeedEventType] = mapped_column(
-        SAEnum(RoomFeedEventType, name='room_feed_event_type')
+        SAEnum(
+            RoomFeedEventType,
+            name='room_feed_event_type',
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        )
     )
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     problem_slug: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)

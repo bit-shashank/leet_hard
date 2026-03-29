@@ -74,6 +74,7 @@ Frontend app: `http://localhost:3000`
 - `LEETCODE_API_BASE_URL`
 - `APP_TOKEN_SECRET`
 - `CORS_ORIGINS`
+- `CORS_ORIGIN_REGEX` (optional, useful for preview domains like `https://.*\.vercel\.app`)
 - `SUPABASE_URL`
 - `SUPABASE_JWKS_URL` (optional if derivable from `SUPABASE_URL`)
 - `SUPABASE_JWT_AUDIENCE` (default `authenticated`)

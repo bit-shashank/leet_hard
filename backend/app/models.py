@@ -244,7 +244,13 @@ class RoomFeedEvent(Base):
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     problem_slug: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     source: Mapped[Optional[SolveSource]] = mapped_column(
-        SAEnum(SolveSource, name='room_feed_event_source'), nullable=True
+        SAEnum(
+            SolveSource,
+            name='room_feed_event_source',
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        ),
+        nullable=True,
     )
     actor_username: Mapped[str] = mapped_column(String(50))
     actor_avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

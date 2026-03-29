@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     app_token_secret: str = 'change-me-in-production'
 
     cors_origins: str = 'http://localhost:3000'
+    cors_origin_regex: str = r'https://.*\.vercel\.app'
     frontend_base_url: str = 'http://localhost:3000'
     supabase_url: str = ''
     supabase_jwks_url: str = ''
@@ -84,6 +85,11 @@ class Settings(BaseSettings):
             origins.append(frontend_origin)
 
         return origins or ['*']
+
+    @property
+    def cors_origin_regex_pattern(self) -> str | None:
+        pattern = self.cors_origin_regex.strip()
+        return pattern or None
 
 
 @lru_cache(maxsize=1)

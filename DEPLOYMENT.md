@@ -55,6 +55,7 @@ DATABASE_URL=postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.
 LEETCODE_API_BASE_URL=https://leetcode-api-pied.vercel.app
 APP_TOKEN_SECRET=<long-random-secret>
 CORS_ORIGINS=https://leet-hard.vercel.app,http://localhost:3000
+CORS_ORIGIN_REGEX=https://.*\\.vercel\\.app
 FRONTEND_BASE_URL=https://leet-hard.vercel.app
 SUPABASE_URL=https://<PROJECT_REF>.supabase.co
 SUPABASE_JWKS_URL=https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json
@@ -70,6 +71,8 @@ PYTHON_VERSION=3.12.3
 Notes:
 - `APP_TOKEN_SECRET` should be a long random string.
 - `CORS_ORIGINS` accepts comma-separated values.
+- `CORS_ORIGIN_REGEX` supports preview domains without updating env on every preview deploy.
+- Avoid `CORS_ORIGINS=*` in production when auth headers/cookies are involved.
 - After first deploy, copy your Render backend URL (example: `https://<backend-name>.onrender.com`).
 
 ## 3) Deploy Frontend on Vercel
@@ -149,11 +152,12 @@ Fix:
 
 ### Error: CORS blocked in browser
 
-Cause: missing or incorrect `CORS_ORIGINS`.
+Cause: missing or incorrect `CORS_ORIGINS` / `CORS_ORIGIN_REGEX`.
 
 Fix:
-- Add exact Vercel URL to `CORS_ORIGINS`.
-- If using preview deployments, include each required domain or keep production-only for stability.
+- Add production URL(s) to `CORS_ORIGINS`.
+- For previews, set `CORS_ORIGIN_REGEX=https://.*\\.vercel\\.app` (or a tighter project-specific regex).
+- Avoid wildcard `*` when using credentialed/authenticated requests.
 
 ### `ERR_CONNECTION_REFUSED` from frontend to backend
 

@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -84,24 +84,6 @@ def _normalize_room_code(room_code: str) -> str:
 
 def _normalize_slug(slug: str) -> str:
     return slug.strip().strip('/').lower()
-
-
-def _sse_cors_headers(request: Request) -> dict[str, str]:
-    settings = get_settings()
-    origin = request.headers.get('origin', '')
-    allowed = settings.cors_origins_list
-
-    if allowed == ['*']:
-        return {'Access-Control-Allow-Origin': '*'}
-
-    if origin and origin in allowed:
-        return {
-            'Access-Control-Allow-Origin': origin,
-            'Access-Control-Allow-Credentials': 'true',
-            'Vary': 'Origin',
-        }
-
-    return {}
 
 
 def _normalize_topic_filters(raw_slugs: list[str]) -> list[str]:
@@ -1368,7 +1350,6 @@ def stream_room_state(
     room_code: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
     room = _get_room_or_404(db, room_code)
     participant = _get_participant_for_user(db, room, current_user.id, required=True)
@@ -1432,8 +1413,6 @@ def stream_room_state(
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no',
     }
-    if request is not None:
-        headers.update(_sse_cors_headers(request))
     return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
 
 
@@ -1625,7 +1604,6 @@ def stream_room_feed(
     limit: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
     room = _get_room_or_404(db, room_code)
     participant = _get_participant_for_user(db, room, current_user.id, required=True)
@@ -1676,8 +1654,6 @@ def stream_room_feed(
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no',
     }
-    if request is not None:
-        headers.update(_sse_cors_headers(request))
     return StreamingResponse(event_stream(), media_type='text/event-stream', headers=headers)
 
 

@@ -218,10 +218,10 @@ export default function DashboardPage() {
     }
 
     let cancelled = false;
-    async function loadSubmissions() {
+    async function loadSubmissions(authToken: string) {
       setSubmissionsLoading(true);
       try {
-        const response = await getMySubmissions(token, { limit: 20 });
+        const response = await getMySubmissions(authToken, { limit: 20 });
         if (cancelled) return;
         setRecentSubmissions(response);
         setSubmissionError(null);
@@ -234,7 +234,7 @@ export default function DashboardPage() {
       }
     }
 
-    void loadSubmissions();
+    void loadSubmissions(token);
     return () => {
       cancelled = true;
     };

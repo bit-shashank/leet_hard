@@ -93,6 +93,7 @@ Frontend app: `http://localhost:3000`
 - `NEXT_PUBLIC_API_BASE_URL`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_ROOM_START_COUNTDOWN_ENABLED` (default-enabled; set `false`, `0`, `off`, or `no` to disable)
 
 ## Deployment Notes
 - Vercel (frontend): set `NEXT_PUBLIC_API_BASE_URL` to Render backend URL.

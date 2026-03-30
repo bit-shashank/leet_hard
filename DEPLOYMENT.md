@@ -97,9 +97,11 @@ Notes:
 NEXT_PUBLIC_API_BASE_URL=https://<backend-name>.onrender.com
 NEXT_PUBLIC_SUPABASE_URL=https://<PROJECT_REF>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<SUPABASE_ANON_KEY>
+NEXT_PUBLIC_ROOM_START_COUNTDOWN_ENABLED=true
 ```
 
 Redeploy frontend after setting env vars.
+`NEXT_PUBLIC_ROOM_START_COUNTDOWN_ENABLED` is enabled by default when unset. Use `false`, `0`, `off`, or `no` to disable it.
 
 ## 4) Post-Deploy Verification Checklist
 

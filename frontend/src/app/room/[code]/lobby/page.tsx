@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
@@ -13,6 +13,7 @@ import { SectionCard } from "@/components/section-card";
 import { TopicSelector } from "@/components/topic-selector";
 import { ApiError, getRoomState, getRoomTopics, leaveRoom, updateRoomSettings } from "@/lib/api";
 import { saveFlashNotice } from "@/lib/auth-intent";
+import { isRoomStartCountdownEnabled } from "@/lib/feature-flags";
 import { formatCountdown, prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { formatProblemSource } from "@/lib/problem-source";
@@ -77,6 +78,11 @@ export default function LobbyPage() {
   const [shareCopied, setShareCopied] = useState(false);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const originalTitleRef = useRef<string | null>(null);
+  const tickAudioRef = useRef<HTMLAudioElement | null>(null);
+  const startAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioPrimedRef = useRef(false);
+  const lastPlayedCountdownSecondRef = useRef<number | null>(null);
   const [formLoadedForRoom, setFormLoadedForRoom] = useState<string | null>(null);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
   const [topicsLoading, setTopicsLoading] = useState(true);
@@ -208,6 +214,150 @@ export default function LobbyPage() {
     return formatCountdown(state.room.scheduled_start_at, virtualServerNow);
   }, [nowMs, serverOffsetMs, state?.room.scheduled_start_at]);
 
+  const secondsUntilStart = useMemo(() => {
+    if (!state?.room.scheduled_start_at || state.room.status !== "lobby") return null;
+    const startAtMs = new Date(state.room.scheduled_start_at).getTime();
+    const virtualServerNowMs = nowMs + serverOffsetMs;
+    return Math.ceil((startAtMs - virtualServerNowMs) / 1000);
+  }, [nowMs, serverOffsetMs, state?.room.scheduled_start_at, state?.room.status]);
+
+  const countdownSecond = useMemo(() => {
+    if (secondsUntilStart === null || secondsUntilStart > 10 || secondsUntilStart < 1) return null;
+    return secondsUntilStart;
+  }, [secondsUntilStart]);
+
+  const showCountdownOverlay = useMemo(() => {
+    if (!isRoomStartCountdownEnabled) return false;
+    if (state?.room.status !== "lobby") return false;
+    return countdownSecond !== null || (secondsUntilStart !== null && secondsUntilStart <= 0);
+  }, [countdownSecond, secondsUntilStart, state?.room.status]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (originalTitleRef.current === null) {
+      originalTitleRef.current = document.title;
+    }
+    return () => {
+      if (originalTitleRef.current !== null) {
+        document.title = originalTitleRef.current;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (originalTitleRef.current === null) return;
+    if (!state?.room || !isRoomStartCountdownEnabled || state.room.status !== "lobby") {
+      document.title = originalTitleRef.current;
+      return;
+    }
+
+    const roomLabel = state.room.room_title || `Room ${roomCode}`;
+    if (countdownSecond !== null) {
+      document.title = `Starts in ${countdownSecond}s · ${roomLabel}`;
+      return;
+    }
+
+    if (secondsUntilStart !== null && secondsUntilStart <= 0) {
+      document.title = `Starting... · ${roomLabel}`;
+      return;
+    }
+
+    document.title = originalTitleRef.current;
+  }, [countdownSecond, roomCode, secondsUntilStart, state?.room]);
+
+  const ensureCountdownAudio = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (!tickAudioRef.current) {
+      tickAudioRef.current = new Audio("/audio/countdown/tick.mp3");
+      tickAudioRef.current.preload = "auto";
+      tickAudioRef.current.volume = 1;
+    }
+    if (!startAudioRef.current) {
+      startAudioRef.current = new Audio("/audio/countdown/start.mp3");
+      startAudioRef.current.preload = "auto";
+      startAudioRef.current.volume = 1;
+    }
+  }, []);
+
+  const playCountdownClip = useCallback(
+    async (kind: "tick" | "start") => {
+      ensureCountdownAudio();
+      const audio = kind === "start" ? startAudioRef.current : tickAudioRef.current;
+      if (!audio) return;
+      try {
+        audio.currentTime = 0;
+        await audio.play();
+      } catch {
+        // Ignore playback errors (autoplay restrictions or missing files).
+      }
+    },
+    [ensureCountdownAudio],
+  );
+
+  const primeCountdownAudio = useCallback(async () => {
+    if (audioPrimedRef.current) return;
+    ensureCountdownAudio();
+    const audios = [tickAudioRef.current, startAudioRef.current].filter(Boolean) as HTMLAudioElement[];
+    if (!audios.length) return;
+
+    for (const audio of audios) {
+      try {
+        audio.muted = true;
+        audio.currentTime = 0;
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+      } catch {
+        audio.muted = false;
+      }
+    }
+
+    audioPrimedRef.current = true;
+  }, [ensureCountdownAudio]);
+
+  useEffect(() => {
+    if (!isRoomStartCountdownEnabled) return;
+    if (typeof window === "undefined") return;
+
+    ensureCountdownAudio();
+    const unlockAudio = () => {
+      void primeCountdownAudio();
+    };
+
+    window.addEventListener("pointerdown", unlockAudio, { passive: true });
+    window.addEventListener("keydown", unlockAudio);
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, [ensureCountdownAudio, primeCountdownAudio]);
+
+  useEffect(() => {
+    if (!isRoomStartCountdownEnabled || state?.room.status !== "lobby") {
+      lastPlayedCountdownSecondRef.current = null;
+      return;
+    }
+
+    if (countdownSecond !== null) {
+      if (lastPlayedCountdownSecondRef.current === countdownSecond) return;
+      lastPlayedCountdownSecondRef.current = countdownSecond;
+      void playCountdownClip("tick");
+      return;
+    }
+
+    if (secondsUntilStart !== null && secondsUntilStart <= 0) {
+      if (lastPlayedCountdownSecondRef.current === 0) return;
+      lastPlayedCountdownSecondRef.current = 0;
+      void playCountdownClip("start");
+      return;
+    }
+
+    lastPlayedCountdownSecondRef.current = null;
+  }, [countdownSecond, playCountdownClip, secondsUntilStart, state?.room.status]);
+
   async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessToken || !state) return;
@@ -338,6 +488,21 @@ export default function LobbyPage() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl space-y-6 px-4 py-8 md:px-8">
+      {showCountdownOverlay ? (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/82 backdrop-blur-sm">
+          <div className="text-center">
+            <p className="text-xs uppercase tracking-[0.35em] text-cyan-200/80 md:text-sm">
+              Challenge Starts In
+            </p>
+            <p className="mt-4 font-mono text-[clamp(5.5rem,24vw,13rem)] font-bold leading-none text-cyan-100 drop-shadow-[0_0_24px_rgba(34,211,238,0.35)]">
+              {countdownSecond !== null ? countdownSecond : "START"}
+            </p>
+            <p className="mt-4 text-sm text-cyan-100/80 md:text-base">
+              {countdownSecond !== null ? "Get ready..." : "Starting..."}
+            </p>
+          </div>
+        </div>
+      ) : null}
       <header className="rounded-2xl border border-cyan-300/20 bg-slate-900/65 p-6 backdrop-blur">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">

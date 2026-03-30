@@ -205,7 +205,8 @@ export default function DashboardPage() {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (!accessToken) {
+    const token = accessToken;
+    if (!token) {
       setRecentSubmissions([]);
       setSubmissionError(null);
       setSubmissionsLoading(false);
@@ -220,7 +221,7 @@ export default function DashboardPage() {
     async function loadSubmissions() {
       setSubmissionsLoading(true);
       try {
-        const response = await getMySubmissions(accessToken, { limit: 20 });
+        const response = await getMySubmissions(token, { limit: 20 });
         if (cancelled) return;
         setRecentSubmissions(response);
         setSubmissionError(null);
@@ -240,7 +241,8 @@ export default function DashboardPage() {
   }, [accessToken]);
 
   async function handleToggleSubmissionView() {
-    if (!accessToken) return;
+    const token = accessToken;
+    if (!token) return;
     if (submissionView === "all") {
       setSubmissionView("recent");
       return;
@@ -252,7 +254,7 @@ export default function DashboardPage() {
     setAllSubmissionsLoading(true);
     setAllSubmissionsError(null);
     try {
-      const response = await getMySubmissions(accessToken, { limit: 100 });
+      const response = await getMySubmissions(token, { limit: 100 });
       setAllSubmissions(response);
     } catch (err) {
       setAllSubmissions([]);

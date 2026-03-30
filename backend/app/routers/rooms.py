@@ -1689,17 +1689,36 @@ def get_room_history(
         .order_by(SolveEvent.event_at.asc(), SolveEvent.created_at.asc())
     ).all()
 
-    history_events = [
-        HistoryEvent(
-            participant_id=event.participant_id,
-            participant_leetcode_username=username_by_participant.get(event.participant_id, 'unknown'),
-            problem_slug=event.problem_slug,
-            event_type=event.event_type,
-            source=event.source,
-            event_at=event.event_at,
-        )
-        for event in events
-    ]
+    history_events = []
+    if events:
+        history_events = [
+            HistoryEvent(
+                participant_id=event.participant_id,
+                participant_leetcode_username=username_by_participant.get(event.participant_id, 'unknown'),
+                problem_slug=event.problem_slug,
+                event_type=event.event_type,
+                source=event.source,
+                event_at=event.event_at,
+            )
+            for event in events
+        ]
+    elif solves:
+        # Legacy rooms may have solve rows without solve_events; synthesize timeline entries.
+        history_events = [
+            HistoryEvent(
+                participant_id=solve.participant_id,
+                participant_leetcode_username=username_by_participant.get(solve.participant_id, 'unknown'),
+                problem_slug=solve.problem_slug,
+                event_type=(
+                    SolveEventType.AUTO_DETECTED
+                    if solve.source == SolveSource.AUTO
+                    else SolveEventType.MARKED_SOLVED
+                ),
+                source=solve.source,
+                event_at=solve.first_solved_at,
+            )
+            for solve in solves
+        ]
 
     return HistoryResponse(
         room=_room_to_public(room),

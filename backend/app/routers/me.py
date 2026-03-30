@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import auth
@@ -695,11 +695,25 @@ def get_my_recent_submissions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    normalized_primary = auth.normalize_leetcode_username(current_user.primary_leetcode_username or '')
+    identity_filters = [Participant.user_id == current_user.id]
+    if (
+        normalized_primary
+        and current_user.leetcode_verified_at is not None
+        and current_user.leetcode_username_locked
+    ):
+        identity_filters.append(
+            and_(
+                Participant.user_id.is_(None),
+                func.lower(Participant.leetcode_username) == normalized_primary.lower(),
+            )
+        )
+
     solve_rows = db.execute(
         select(ParticipantSolve, Participant, Room)
         .join(Participant, Participant.id == ParticipantSolve.participant_id)
         .join(Room, Room.id == ParticipantSolve.room_id)
-        .where(Participant.user_id == current_user.id)
+        .where(or_(*identity_filters))
         .order_by(ParticipantSolve.first_solved_at.desc(), ParticipantSolve.created_at.desc())
         .limit(limit)
     ).all()

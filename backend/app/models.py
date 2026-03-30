@@ -237,6 +237,7 @@ class ParticipantSolve(Base):
     problem_slug: Mapped[str] = mapped_column(String(255), index=True)
     first_solved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source: Mapped[SolveSource] = mapped_column(SAEnum(SolveSource, name='solve_source'))
+    submission_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

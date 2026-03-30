@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from app.models import (
     Participant,
     ParticipantSolve,
     Room,
+    RoomProblem,
     RoomStatus,
     User,
     VerificationChallengeStatus,
@@ -24,10 +25,16 @@ from app.schemas import (
     OnboardingStartResponse,
     OnboardingVerifyRequest,
     OnboardingVerifyResponse,
+    RecentAcceptedSubmissionPublic,
     UpdateMeRequest,
 )
 from app.security import get_current_user
-from app.services.leetcode import LeetCodeServiceError, get_recent_submissions, get_user_profile
+from app.services.leetcode import (
+    LeetCodeServiceError,
+    extract_submission_url,
+    get_recent_submissions,
+    get_user_profile,
+)
 
 router = APIRouter(prefix='/me', tags=['me'])
 
@@ -192,6 +199,99 @@ def _room_rank_map(db: Session, room_id: str) -> dict[str, int]:
 
     sorted_rows = sorted(rows, key=sort_key)
     return {row.id: index for index, row in enumerate(sorted_rows, start=1)}
+
+
+def _room_solve_window(room: Room, participant: Participant) -> tuple[datetime | None, datetime | None]:
+    room_starts_at = _coerce_utc(room.starts_at)
+    room_ends_at = _coerce_utc(room.ends_at)
+    participant_joined_at = _coerce_utc(participant.joined_at)
+
+    solve_window_start = room_starts_at
+    if participant_joined_at is not None:
+        if solve_window_start is None or participant_joined_at > solve_window_start:
+            solve_window_start = participant_joined_at
+
+    return solve_window_start, room_ends_at
+
+
+def _is_accepted_submission(submission: dict) -> bool:
+    status_display = submission.get('statusDisplay')
+    status_code = submission.get('status')
+    return status_display == 'Accepted' or status_code == 10
+
+
+def _match_submission_for_room_solve(
+    submission: dict,
+    problem_slug: str,
+    solve_window_start: datetime | None,
+    solve_window_end: datetime | None,
+) -> tuple[datetime, str] | None:
+    if not _is_accepted_submission(submission):
+        return None
+
+    slug = submission.get('titleSlug') or submission.get('title_slug')
+    if not slug or str(slug).strip().strip('/').lower() != problem_slug:
+        return None
+
+    raw_ts = submission.get('timestamp')
+    if raw_ts is None:
+        return None
+
+    try:
+        solved_at = datetime.fromtimestamp(int(raw_ts), tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+    if solve_window_start and solved_at < solve_window_start:
+        return None
+    if solve_window_end and solved_at > solve_window_end:
+        return None
+
+    submission_url = extract_submission_url(submission)
+    if not submission_url:
+        return None
+
+    return solved_at, submission_url
+
+
+def _pick_submission_url_for_room_solve(
+    solve: ParticipantSolve,
+    room: Room,
+    participant: Participant,
+    submissions: list[dict],
+) -> str | None:
+    solve_window_start, solve_window_end = _room_solve_window(room, participant)
+    target_time = _coerce_utc(solve.first_solved_at)
+    candidates: list[tuple[int, float, datetime, str]] = []
+    normalized_slug = (solve.problem_slug or '').strip().strip('/').lower()
+
+    for submission in submissions:
+        match = _match_submission_for_room_solve(
+            submission=submission,
+            problem_slug=normalized_slug,
+            solve_window_start=solve_window_start,
+            solve_window_end=solve_window_end,
+        )
+        if match is None:
+            continue
+        solved_at, submission_url = match
+
+        exact_match = (
+            target_time is not None
+            and int(solved_at.timestamp()) == int(target_time.timestamp())
+        )
+        delta_seconds = (
+            abs((solved_at - target_time).total_seconds())
+            if target_time is not None
+            else float('inf')
+        )
+        candidates.append((0 if exact_match else 1, delta_seconds, solved_at, submission_url))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return candidates[0][3]
 
 
 def _build_onboarding_response(challenge: LeetCodeVerificationChallenge) -> OnboardingStartResponse:
@@ -587,3 +687,102 @@ def get_dashboard(
         avg_rank=avg_rank,
         recent_rooms=recent_rooms,
     )
+
+
+@router.get('/submissions', response_model=list[RecentAcceptedSubmissionPublic])
+def get_my_recent_submissions(
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    solve_rows = db.execute(
+        select(ParticipantSolve, Participant, Room)
+        .join(Participant, Participant.id == ParticipantSolve.participant_id)
+        .join(Room, Room.id == ParticipantSolve.room_id)
+        .where(Participant.user_id == current_user.id)
+        .order_by(ParticipantSolve.first_solved_at.desc(), ParticipantSolve.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    missing_by_username: dict[str, list[tuple[ParticipantSolve, Participant, Room]]] = {}
+    for solve, participant, room in solve_rows:
+        if solve.submission_url:
+            continue
+        username = (participant.leetcode_username or '').strip()
+        if not username:
+            continue
+        missing_by_username.setdefault(username, []).append((solve, participant, room))
+
+    dirty = False
+    for username, triples in missing_by_username.items():
+        try:
+            submissions = get_recent_submissions(username, limit=100)
+        except LeetCodeServiceError:
+            continue
+
+        for solve, participant, room in triples:
+            recovered_url = _pick_submission_url_for_room_solve(
+                solve=solve,
+                room=room,
+                participant=participant,
+                submissions=submissions,
+            )
+            if recovered_url and solve.submission_url != recovered_url:
+                solve.submission_url = recovered_url
+                dirty = True
+
+    if dirty:
+        db.commit()
+
+    room_ids = list({solve.room_id for solve, _, _ in solve_rows})
+    problem_slugs = list({(solve.problem_slug or '').strip().strip('/').lower() for solve, _, _ in solve_rows if solve.problem_slug})
+    problem_meta: dict[tuple[str, str], tuple[str | None, str | None, str | None]] = {}
+    if room_ids and problem_slugs:
+        meta_rows = db.execute(
+            select(
+                RoomProblem.room_id,
+                RoomProblem.title_slug,
+                RoomProblem.title,
+                RoomProblem.url,
+                RoomProblem.difficulty,
+            ).where(
+                RoomProblem.room_id.in_(room_ids),
+                RoomProblem.title_slug.in_(problem_slugs),
+            )
+        ).all()
+        problem_meta = {
+            (
+                str(row.room_id),
+                str(row.title_slug).strip().strip('/').lower(),
+            ): (
+                row.title,
+                row.url,
+                row.difficulty,
+            )
+            for row in meta_rows
+        }
+
+    items: list[RecentAcceptedSubmissionPublic] = []
+    for solve, _, _ in solve_rows:
+        slug = (solve.problem_slug or '').strip().strip('/').lower()
+        if not slug:
+            continue
+        meta = problem_meta.get((solve.room_id, slug))
+        title = ((meta[0] if meta else None) or '').strip() or slug.replace('-', ' ').title()
+        problem_url = ((meta[1] if meta else None) or '').strip() or f'https://leetcode.com/problems/{slug}/'
+        difficulty = ((meta[2] if meta else None) or '').strip().lower() if (meta and meta[2]) else None
+        if difficulty not in {'easy', 'medium', 'hard'}:
+            difficulty = None
+
+        items.append(
+            RecentAcceptedSubmissionPublic(
+                problem_slug=slug,
+                problem_title=title,
+                problem_difficulty=difficulty,
+                submitted_at=solve.first_solved_at,
+                submission_url=solve.submission_url,
+                problem_url=problem_url,
+            )
+        )
+
+    return items

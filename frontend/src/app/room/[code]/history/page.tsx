@@ -140,6 +140,16 @@ export default function RoomHistoryPage() {
       (history?.room.topic_slugs || []).map((slug) => topicNameBySlug.get(slug) || slug),
     [history?.room.topic_slugs, topicNameBySlug],
   );
+  const submissionUrlBySolveKey = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const submission of history?.accepted_submissions || []) {
+      const key = `${submission.participant_id}::${submission.problem_slug}`;
+      const existing = map.get(key);
+      if (existing) continue;
+      map.set(key, submission.submission_url);
+    }
+    return map;
+  }, [history?.accepted_submissions]);
 
   async function handleShareRoom() {
     if (!history?.room) return;
@@ -329,28 +339,53 @@ export default function RoomHistoryPage() {
 
         <SectionCard
           title="Solve Timeline"
-          subtitle="All auto/manual solve events in chronological order."
+          subtitle="All solve events in chronological order with contextual proof links."
           className="lg:flex lg:h-full lg:min-h-0 lg:flex-col"
           contentClassName="min-w-0 lg:min-h-0 lg:flex-1"
         >
           <div className="site-scrollbar space-y-3 overflow-x-hidden lg:h-full lg:overflow-y-auto lg:pr-1">
             {history?.events.length ? (
-              history.events.map((event, idx) => (
-                <div
-                  key={`${event.participant_id}-${event.problem_slug}-${event.event_at}-${idx}`}
-                  className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
-                >
-                  <p className="text-slate-100 break-words">
-                    <span className="font-semibold text-cyan-200">
-                      @{event.participant_leetcode_username}
-                    </span>{" "}
-                    <span className="font-mono text-slate-300 break-all">{event.problem_slug}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {event.event_type} via {event.source} · {prettyDateTime(event.event_at)}
-                  </p>
-                </div>
-              ))
+              history.events.map((event, idx) => {
+                const isSolveEvent =
+                  event.event_type === "marked_solved" || event.event_type === "auto_detected";
+                const solveKey = `${event.participant_id}::${event.problem_slug}`;
+                const submissionUrl = isSolveEvent ? (submissionUrlBySolveKey.get(solveKey) ?? null) : null;
+
+                return (
+                  <div
+                    key={`${event.participant_id}-${event.problem_slug}-${event.event_at}-${idx}`}
+                    className="rounded-lg border border-slate-700/60 bg-slate-950/45 px-3 py-2 text-sm"
+                  >
+                    <p className="text-slate-100 break-words">
+                      <span className="font-semibold text-cyan-200">
+                        @{event.participant_leetcode_username}
+                      </span>{" "}
+                      <span className="font-mono text-slate-300 break-all">{event.problem_slug}</span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {event.event_type} via {event.source} · {prettyDateTime(event.event_at)}
+                    </p>
+                    <div className="mt-2">
+                      {isSolveEvent ? (
+                        submissionUrl ? (
+                          <a
+                            href={submissionUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex rounded-lg border border-cyan-300/30 px-2 py-1 text-xs text-cyan-200 transition hover:bg-cyan-500/10"
+                          >
+                            Open Submission
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-400">Unavailable</span>
+                        )
+                      ) : (
+                        <span className="text-xs text-slate-500">Not applicable</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
               <p className="text-sm text-slate-300">No solve events recorded in this room.</p>
             )}

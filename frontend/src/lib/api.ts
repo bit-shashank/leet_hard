@@ -19,6 +19,7 @@ import type {
   OnboardingStartResponse,
   OnboardingVerifyRequest,
   OnboardingVerifyResponse,
+  RecentAcceptedSubmission,
   RoomStateResponse,
   RoomFeedEvent,
   RoomFeedResponse,
@@ -213,6 +214,15 @@ export function deleteMe(accessToken: string) {
 
 export function getDashboard(accessToken: string) {
   return request<DashboardResponse>("/api/v1/me/dashboard", {
+    accessToken,
+  });
+}
+
+export function getMySubmissions(accessToken: string, opts?: { limit?: number }) {
+  const query = new URLSearchParams();
+  if (opts?.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<RecentAcceptedSubmission[]>(`/api/v1/me/submissions${suffix}`, {
     accessToken,
   });
 }

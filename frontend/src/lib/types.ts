@@ -110,11 +110,21 @@ export type HistoryEvent = {
   event_at: string;
 };
 
+export type AcceptedSubmission = {
+  participant_id: string;
+  participant_leetcode_username: string;
+  problem_slug: string;
+  solved_at: string;
+  source: SolveSource;
+  submission_url: string | null;
+};
+
 export type HistoryResponse = {
   room: RoomPublic;
   problems: ProblemPublic[];
   leaderboard: LeaderboardEntry[];
   events: HistoryEvent[];
+  accepted_submissions: AcceptedSubmission[];
 };
 
 export type DiscoverRoomResponse = {
@@ -215,6 +225,15 @@ export type DashboardResponse = {
   total_solves: number;
   avg_rank: number | null;
   recent_rooms: DashboardRoomItem[];
+};
+
+export type RecentAcceptedSubmission = {
+  problem_slug: string;
+  problem_title: string;
+  problem_difficulty?: "easy" | "medium" | "hard" | null;
+  submitted_at: string;
+  submission_url: string | null;
+  problem_url: string;
 };
 
 export type OnboardingStartRequest = {

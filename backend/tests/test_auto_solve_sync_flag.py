@@ -209,6 +209,7 @@ def test_get_room_state_auto_syncs_solves_when_flag_enabled(client):
                 'statusDisplay': 'Accepted',
                 'status': 10,
                 'timestamp': int(solved_at.timestamp()),
+                'submissionId': 554433221,
             }
         ],
     )
@@ -229,6 +230,7 @@ def test_get_room_state_auto_syncs_solves_when_flag_enabled(client):
     assert room.last_synced_at is not None
     assert solve is not None
     assert solve.source == SolveSource.AUTO
+    assert solve.submission_url == 'https://leetcode.com/submissions/detail/554433221/'
     db.close()
 
 
@@ -336,7 +338,7 @@ def test_manual_strict_check_mark_solved_unchanged_with_flag(client, auto_sync_e
     def _strict_verify(room, participant, slug):
         calls['count'] += 1
         assert slug == problem_slug
-        return verified_at
+        return verified_at, 'https://leetcode.com/submissions/detail/777888999/'
 
     monkeypatch.setattr('app.routers.rooms._get_strict_verified_solve_time', _strict_verify)
 
@@ -369,4 +371,5 @@ def test_manual_strict_check_mark_solved_unchanged_with_flag(client, auto_sync_e
     if stored.tzinfo is None:
         stored = stored.replace(tzinfo=timezone.utc)
     assert int(stored.timestamp()) == int(verified_at.timestamp())
+    assert solve.submission_url == 'https://leetcode.com/submissions/detail/777888999/'
     db.close()

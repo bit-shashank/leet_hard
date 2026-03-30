@@ -11,11 +11,21 @@ os.environ.setdefault('DATABASE_URL', 'sqlite:///./test_bootstrap.db')
 
 from app.db import get_db
 from app.main import app
-from app.models import Base, Participant, ProblemSource, Room, RoomProblem, RoomStatus, User
+from app.models import (
+    Base,
+    Participant,
+    ParticipantSolve,
+    ProblemSource,
+    Room,
+    RoomProblem,
+    RoomStatus,
+    SolveSource,
+    User,
+)
 from app.security import get_current_user
 
 
-def _seed_ended_room(SessionTest) -> str:
+def _seed_ended_room(SessionTest, *, with_solve: bool = False) -> tuple[str, datetime | None]:
     now = datetime.now(timezone.utc)
 
     db = SessionTest()
@@ -85,17 +95,31 @@ def _seed_ended_room(SessionTest) -> str:
         ]
     )
 
+    solved_at = None
+    if with_solve:
+        solved_at = now - timedelta(hours=1, minutes=20)
+        db.add(
+            ParticipantSolve(
+                room_id=room.id,
+                participant_id=host.id,
+                problem_slug='two-sum',
+                first_solved_at=solved_at,
+                source=SolveSource.AUTO,
+                submission_url=None,
+            )
+        )
+
     db.commit()
     room_code = room.room_code
     db.close()
-    return room_code
+    return room_code, solved_at
 
 
 def _auth_headers(user_id: str) -> dict[str, str]:
     return {'Authorization': f'Bearer {user_id}'}
 
 
-def test_room_history_includes_problem_set_and_allows_non_participant(monkeypatch):
+def _setup_client(monkeypatch):
     engine = create_engine(
         'sqlite://',
         connect_args={'check_same_thread': False},
@@ -142,9 +166,14 @@ def test_room_history_includes_problem_set_and_allows_non_participant(monkeypatc
         lambda username: f'https://cdn.example.com/{username}.png',
     )
 
+    return TestClient(app), SessionTest
+
+
+def test_room_history_requires_participant_and_includes_problem_set(monkeypatch):
+    client, SessionTest = _setup_client(monkeypatch)
+
     try:
-        client = TestClient(app)
-        room_code = _seed_ended_room(SessionTest)
+        room_code, _ = _seed_ended_room(SessionTest)
 
         host_response = client.get(f'/api/v1/rooms/{room_code}/history', headers=_auth_headers('user-host'))
         assert host_response.status_code == 200
@@ -155,17 +184,59 @@ def test_room_history_includes_problem_set_and_allows_non_participant(monkeypatc
             '3sum',
         ]
         assert [problem['sort_order'] for problem in host_payload['problems']] == [1, 2, 3]
+        assert host_payload['accepted_submissions'] == []
 
         viewer_response = client.get(
             f'/api/v1/rooms/{room_code}/history',
             headers=_auth_headers('user-viewer'),
         )
-        assert viewer_response.status_code == 200
-        viewer_payload = viewer_response.json()
-        assert [problem['title_slug'] for problem in viewer_payload['problems']] == [
-            'two-sum',
-            'add-two-numbers',
-            '3sum',
-        ]
+        assert viewer_response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_room_history_lazy_backfills_submission_urls(monkeypatch):
+    client, SessionTest = _setup_client(monkeypatch)
+
+    try:
+        room_code, solved_at = _seed_ended_room(SessionTest, with_solve=True)
+        assert solved_at is not None
+
+        monkeypatch.setattr(
+            'app.routers.rooms.get_recent_submissions',
+            lambda username, limit=100: [
+                {
+                    'titleSlug': 'two-sum',
+                    'statusDisplay': 'Accepted',
+                    'status': 10,
+                    'timestamp': int(solved_at.timestamp()),
+                    'submissionId': 123456789,
+                }
+            ],
+        )
+
+        response = client.get(f'/api/v1/rooms/{room_code}/history', headers=_auth_headers('user-host'))
+        assert response.status_code == 200
+        payload = response.json()
+        assert len(payload['accepted_submissions']) == 1
+        assert payload['accepted_submissions'][0]['submission_url'] == 'https://leetcode.com/submissions/detail/123456789/'
+
+        with SessionTest() as db:
+            room = db.scalar(select(Room).where(Room.room_code == room_code))
+            host = db.scalar(
+                select(Participant).where(
+                    Participant.room_id == room.id,
+                    Participant.user_id == 'user-host',
+                )
+            )
+            solve = db.scalar(
+                select(ParticipantSolve).where(
+                    ParticipantSolve.room_id == room.id,
+                    ParticipantSolve.participant_id == host.id,
+                    ParticipantSolve.problem_slug == 'two-sum',
+                )
+            )
+            assert solve is not None
+            assert solve.submission_url == 'https://leetcode.com/submissions/detail/123456789/'
     finally:
         app.dependency_overrides.clear()

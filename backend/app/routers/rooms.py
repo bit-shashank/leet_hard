@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.security import get_current_user
 from app.schemas import (
+    AcceptedSubmissionPublic,
     ChatMessageInput,
     CreateRoomRequest,
     CreateRoomResponse,
@@ -52,6 +53,7 @@ from app.services.leetcode import (
     LeetCodeServiceError,
     ProblemSelectionError,
     choose_random_problems_by_source,
+    extract_submission_url,
     get_topic_catalog,
     normalize_topic_slug,
     get_recent_submissions,
@@ -396,6 +398,7 @@ def _upsert_auto_solve(
     participant: Participant,
     problem_slug: str,
     solved_at: datetime,
+    submission_url: Optional[str] = None,
 ) -> bool:
     existing = db.scalar(
         select(ParticipantSolve).where(
@@ -413,6 +416,7 @@ def _upsert_auto_solve(
                 problem_slug=problem_slug,
                 first_solved_at=solved_at,
                 source=SolveSource.AUTO,
+                submission_url=submission_url,
             )
         )
         db.add(
@@ -437,15 +441,22 @@ def _upsert_auto_solve(
         return True
 
     updated = False
+    should_emit_event = False
     if solved_at < _coerce_utc(existing.first_solved_at):
         existing.first_solved_at = solved_at
         existing.source = SolveSource.AUTO
+        should_emit_event = True
         updated = True
     elif existing.source == SolveSource.MANUAL:
         existing.source = SolveSource.AUTO
+        should_emit_event = True
         updated = True
 
-    if updated:
+    if submission_url and existing.submission_url != submission_url:
+        existing.submission_url = submission_url
+        updated = True
+
+    if should_emit_event:
         db.add(
             SolveEvent(
                 room_id=room.id,
@@ -482,16 +493,19 @@ def _participant_solve_window(room: Room, participant: Participant) -> tuple[Opt
     return solve_window_start, room_ends_at
 
 
-def _match_accepted_submission_time(
+def _is_submission_accepted(submission: dict) -> bool:
+    status_display = submission.get('statusDisplay')
+    status_code = submission.get('status')
+    return status_display == 'Accepted' or status_code == 10
+
+
+def _match_accepted_submission(
     submission: dict,
     problem_slug: str,
     solve_window_start: Optional[datetime],
     solve_window_end: Optional[datetime],
-) -> Optional[datetime]:
-    status_display = submission.get('statusDisplay')
-    status_code = submission.get('status')
-    is_accepted = status_display == 'Accepted' or status_code == 10
-    if not is_accepted:
+) -> Optional[tuple[datetime, Optional[str]]]:
+    if not _is_submission_accepted(submission):
         return None
 
     slug = submission.get('titleSlug') or submission.get('title_slug')
@@ -512,14 +526,11 @@ def _match_accepted_submission_time(
     if solve_window_end and solved_at > solve_window_end:
         return None
 
-    return solved_at
+    return solved_at, extract_submission_url(submission)
 
 
 def _accepted_submission_slug(submission: dict) -> Optional[str]:
-    status_display = submission.get('statusDisplay')
-    status_code = submission.get('status')
-    is_accepted = status_display == 'Accepted' or status_code == 10
-    if not is_accepted:
+    if not _is_submission_accepted(submission):
         return None
 
     slug = submission.get('titleSlug') or submission.get('title_slug')
@@ -553,7 +564,11 @@ def _collect_pre_solved_problem_slugs(
     return solved_slugs, errors
 
 
-def _get_strict_verified_solve_time(room: Room, participant: Participant, problem_slug: str) -> datetime:
+def _get_strict_verified_solve_time(
+    room: Room,
+    participant: Participant,
+    problem_slug: str,
+) -> tuple[datetime, Optional[str]]:
     solve_window_start, solve_window_end = _participant_solve_window(room, participant)
 
     try:
@@ -564,16 +579,16 @@ def _get_strict_verified_solve_time(room: Room, participant: Participant, proble
             detail=f'Strict verification unavailable right now: {exc}',
         )
 
-    matches: list[datetime] = []
+    matches: list[tuple[datetime, Optional[str]]] = []
     for submission in submissions:
-        solved_at = _match_accepted_submission_time(
+        match = _match_accepted_submission(
             submission=submission,
             problem_slug=problem_slug,
             solve_window_start=solve_window_start,
             solve_window_end=solve_window_end,
         )
-        if solved_at is not None:
-            matches.append(solved_at)
+        if match is not None:
+            matches.append(match)
 
     if not matches:
         raise HTTPException(
@@ -584,7 +599,7 @@ def _get_strict_verified_solve_time(room: Room, participant: Participant, proble
             ),
         )
 
-    return min(matches)
+    return min(matches, key=lambda item: item[0])
 
 
 def _sync_room_solves(db: Session, room: Room) -> None:
@@ -620,16 +635,24 @@ def _sync_room_solves(db: Session, room: Room) -> None:
             if not problem_slug or problem_slug not in problem_slugs:
                 continue
 
-            solved_at = _match_accepted_submission_time(
+            match = _match_accepted_submission(
                 submission=submission,
                 problem_slug=problem_slug,
                 solve_window_start=solve_window_start,
                 solve_window_end=solve_window_end,
             )
-            if solved_at is None:
+            if match is None:
                 continue
+            solved_at, submission_url = match
 
-            _upsert_auto_solve(db, room, participant, problem_slug, solved_at)
+            _upsert_auto_solve(
+                db,
+                room,
+                participant,
+                problem_slug,
+                solved_at,
+                submission_url=submission_url,
+            )
 
     room.last_synced_at = now
     pre_solved_warning = None
@@ -1375,8 +1398,13 @@ def toggle_manual_solve(
     now = _utcnow()
     settings = get_settings()
     solved_at = now
+    submission_url = None
     if payload.solved and room.strict_check:
-        solved_at = _get_strict_verified_solve_time(room, participant, payload.problem_slug)
+        solved_at, submission_url = _get_strict_verified_solve_time(
+            room,
+            participant,
+            payload.problem_slug,
+        )
 
     if payload.solved:
         if existing is None:
@@ -1387,6 +1415,7 @@ def toggle_manual_solve(
                     problem_slug=payload.problem_slug,
                     first_solved_at=solved_at,
                     source=SolveSource.MANUAL,
+                    submission_url=submission_url,
                 )
             )
             db.add(
@@ -1408,6 +1437,8 @@ def toggle_manual_solve(
                 problem_slug=payload.problem_slug,
                 source=SolveSource.MANUAL,
             )
+        elif submission_url and existing.submission_url != submission_url:
+            existing.submission_url = submission_url
     else:
         if (
             existing
@@ -1518,13 +1549,98 @@ def get_room_feed(
     )
 
 
+def _pick_best_submission_url_for_solve(
+    solve: ParticipantSolve,
+    submissions: list[dict],
+    solve_window_start: Optional[datetime],
+    solve_window_end: Optional[datetime],
+) -> Optional[str]:
+    target_time = _coerce_utc(solve.first_solved_at)
+    candidates: list[tuple[int, float, datetime, str]] = []
+
+    for submission in submissions:
+        match = _match_accepted_submission(
+            submission=submission,
+            problem_slug=solve.problem_slug,
+            solve_window_start=solve_window_start,
+            solve_window_end=solve_window_end,
+        )
+        if match is None:
+            continue
+        solved_at, submission_url = match
+        if not submission_url:
+            continue
+
+        exact_match = (
+            target_time is not None
+            and int(solved_at.timestamp()) == int(target_time.timestamp())
+        )
+        delta_seconds = (
+            abs((solved_at - target_time).total_seconds())
+            if target_time is not None
+            else float('inf')
+        )
+        candidates.append((0 if exact_match else 1, delta_seconds, solved_at, submission_url))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return candidates[0][3]
+
+
+def _lazy_backfill_missing_submission_urls(
+    db: Session,
+    room: Room,
+    participants: list[Participant],
+    solves: list[ParticipantSolve],
+) -> bool:
+    missing = [solve for solve in solves if not solve.submission_url]
+    if not missing:
+        return False
+
+    participant_by_id = {participant.id: participant for participant in participants}
+    solves_by_participant: dict[str, list[ParticipantSolve]] = {}
+    for solve in missing:
+        solves_by_participant.setdefault(solve.participant_id, []).append(solve)
+
+    dirty = False
+    for participant_id, participant_solves in solves_by_participant.items():
+        participant = participant_by_id.get(participant_id)
+        if participant is None:
+            continue
+
+        solve_window_start, solve_window_end = _participant_solve_window(room, participant)
+        try:
+            submissions = get_recent_submissions(participant.leetcode_username, limit=100)
+        except LeetCodeServiceError:
+            continue
+
+        for solve in participant_solves:
+            recovered_url = _pick_best_submission_url_for_solve(
+                solve=solve,
+                submissions=submissions,
+                solve_window_start=solve_window_start,
+                solve_window_end=solve_window_end,
+            )
+            if recovered_url and solve.submission_url != recovered_url:
+                solve.submission_url = recovered_url
+                dirty = True
+
+    if dirty:
+        db.flush()
+
+    return dirty
+
+
 @router.get('/{room_code}/history', response_model=HistoryResponse)
 def get_room_history(
     room_code: str,
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     room = _get_room_or_404(db, room_code)
+    _get_participant_for_user(db, room, current_user.id, required=True)
 
     dirty = False
     if _maybe_auto_start_room(db, room):
@@ -1551,10 +1667,21 @@ def get_room_history(
         .order_by(RoomProblem.sort_order.asc())
     ).all()
 
+    participants = db.scalars(
+        select(Participant).where(Participant.room_id == room.id)
+    ).all()
     username_by_participant = {
         participant.id: participant.leetcode_username
-        for participant in db.scalars(select(Participant).where(Participant.room_id == room.id)).all()
+        for participant in participants
     }
+    solves = db.scalars(
+        select(ParticipantSolve)
+        .where(ParticipantSolve.room_id == room.id)
+        .order_by(ParticipantSolve.first_solved_at.asc(), ParticipantSolve.created_at.asc())
+    ).all()
+
+    if _lazy_backfill_missing_submission_urls(db, room, participants, solves):
+        db.commit()
 
     events = db.scalars(
         select(SolveEvent)
@@ -1579,4 +1706,15 @@ def get_room_history(
         problems=[_problem_to_public(problem) for problem in problems],
         leaderboard=_build_leaderboard(db, room),
         events=history_events,
+        accepted_submissions=[
+            AcceptedSubmissionPublic(
+                participant_id=solve.participant_id,
+                participant_leetcode_username=username_by_participant.get(solve.participant_id, 'unknown'),
+                problem_slug=solve.problem_slug,
+                solved_at=solve.first_solved_at,
+                source=solve.source,
+                submission_url=solve.submission_url,
+            )
+            for solve in solves
+        ],
     )

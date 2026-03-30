@@ -7,17 +7,57 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { InlineSpinner, PageLoader, SkeletonBlock, SkeletonText } from "@/components/loading";
-import { ApiError, deleteMe, getDashboard, updateMe } from "@/lib/api";
+import { ApiError, deleteMe, getDashboard, getMySubmissions, updateMe } from "@/lib/api";
 import { saveFlashNotice } from "@/lib/auth-intent";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
-import type { DashboardResponse } from "@/lib/types";
+import type { DashboardResponse, RecentAcceptedSubmission } from "@/lib/types";
 
 type RecentRoomsTab = "active" | "lobby" | "ended";
 
 function parseApiError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   return "Unable to load dashboard data.";
+}
+
+function parseSubmissionError(error: unknown) {
+  if (error instanceof ApiError) return error.message;
+  return "Unable to load room submissions.";
+}
+
+function formatSubmissionTime(value: string) {
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return value;
+
+  const now = new Date();
+  const diffMs = now.getTime() - target.getTime();
+  if (diffMs < 0) {
+    const minutesAhead = Math.ceil(Math.abs(diffMs) / 60000);
+    if (minutesAhead <= 60) return "Just now";
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(target);
+  }
+
+  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetDay = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const dayDiff = Math.round((nowDay.getTime() - targetDay.getTime()) / 86400000);
+
+  if (dayDiff <= 0) {
+    const hours = Math.max(1, Math.floor(diffMs / 3600000));
+    return `${hours}h ago`;
+  }
+
+  if (dayDiff === 1) {
+    return "Yesterday";
+  }
+
+  if (dayDiff >= 365) {
+    const year = target.getFullYear();
+    const month = String(target.getMonth() + 1).padStart(2, "0");
+    const day = String(target.getDate()).padStart(2, "0");
+    return `${year}.${month}.${day}`;
+  }
+
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(target);
 }
 
 function roomHref(roomCode: string, status: "lobby" | "active" | "ended") {
@@ -97,6 +137,13 @@ export default function DashboardPage() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [submissionsLoading, setSubmissionsLoading] = useState(true);
+  const [recentSubmissions, setRecentSubmissions] = useState<RecentAcceptedSubmission[]>([]);
+  const [submissionView, setSubmissionView] = useState<"recent" | "all">("recent");
+  const [allSubmissionsLoading, setAllSubmissionsLoading] = useState(false);
+  const [allSubmissionsError, setAllSubmissionsError] = useState<string | null>(null);
+  const [allSubmissions, setAllSubmissions] = useState<RecentAcceptedSubmission[] | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [primaryLeet, setPrimaryLeet] = useState("");
   const [recentTab, setRecentTab] = useState<RecentRoomsTab>("active");
@@ -156,6 +203,64 @@ export default function DashboardPage() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setRecentSubmissions([]);
+      setSubmissionError(null);
+      setSubmissionsLoading(false);
+      setSubmissionView("recent");
+      setAllSubmissions(null);
+      setAllSubmissionsError(null);
+      setAllSubmissionsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    async function loadSubmissions() {
+      setSubmissionsLoading(true);
+      try {
+        const response = await getMySubmissions(accessToken, { limit: 20 });
+        if (cancelled) return;
+        setRecentSubmissions(response);
+        setSubmissionError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setRecentSubmissions([]);
+        setSubmissionError(parseSubmissionError(err));
+      } finally {
+        if (!cancelled) setSubmissionsLoading(false);
+      }
+    }
+
+    void loadSubmissions();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  async function handleToggleSubmissionView() {
+    if (!accessToken) return;
+    if (submissionView === "all") {
+      setSubmissionView("recent");
+      return;
+    }
+
+    setSubmissionView("all");
+    if (allSubmissions) return;
+
+    setAllSubmissionsLoading(true);
+    setAllSubmissionsError(null);
+    try {
+      const response = await getMySubmissions(accessToken, { limit: 100 });
+      setAllSubmissions(response);
+    } catch (err) {
+      setAllSubmissions([]);
+      setAllSubmissionsError(parseSubmissionError(err));
+    } finally {
+      setAllSubmissionsLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (recentTabCounts.active > 0) {
@@ -325,6 +430,7 @@ export default function DashboardPage() {
               )}
             </button>
           </form>
+
         </article>
 
         <article className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
@@ -357,7 +463,77 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
         </article>
+      </section>
+
+      <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold text-slate-100">Recent Room Submissions</h2>
+          <button
+            type="button"
+            onClick={() => void handleToggleSubmissionView()}
+            className="rounded-lg border border-slate-500/60 px-3 py-1.5 text-sm text-slate-200 transition hover:bg-slate-800"
+          >
+            {submissionView === "all" ? "Show Recent 20" : "View All Room Submissions"}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">
+          {submissionView === "all" ? "Showing up to 100 room submissions" : "Showing latest 20 room submissions"}
+        </p>
+        {submissionView === "recent" && submissionsLoading ? (
+          <div className="mt-3 space-y-2">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <SkeletonBlock key={`submission-skeleton-${index}`} className="h-9 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : submissionView === "all" && allSubmissionsLoading ? (
+          <div className="mt-3 space-y-2">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <SkeletonBlock key={`submission-all-skeleton-${index}`} className="h-9 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : (submissionView === "recent" ? submissionError : allSubmissionsError) ? (
+          <div className="mt-3 rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+            {submissionView === "recent" ? submissionError : allSubmissionsError}
+          </div>
+        ) : (submissionView === "recent" ? recentSubmissions : allSubmissions ?? []).length ? (
+          <div className="site-scrollbar mt-4 max-h-[34rem] space-y-2 overflow-y-auto pr-1">
+            {(submissionView === "recent" ? recentSubmissions : allSubmissions ?? []).map((submission, index) => (
+              <article
+                key={`${submission.problem_slug}-${submission.submitted_at}-${submission.submission_url ?? submission.problem_url}-${index}`}
+                className="rounded-lg border border-slate-700/60 bg-slate-900/70 px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-[15px] font-medium text-slate-100">{submission.problem_title}</p>
+                  <p className="text-xs text-slate-300">{formatSubmissionTime(submission.submitted_at)}</p>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <a
+                    href={submission.problem_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-cyan-300/30 px-2.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/10"
+                  >
+                    Open Problem
+                  </a>
+                  {submission.submission_url ? (
+                    <a
+                      href={submission.submission_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-emerald-300/30 px-2.5 py-1 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/10"
+                    >
+                      Open Submission
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-300">No room submissions found yet.</p>
+        )}
       </section>
 
       <section className="rounded-2xl border border-slate-700/50 bg-slate-900/70 p-6">

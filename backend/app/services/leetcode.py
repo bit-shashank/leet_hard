@@ -448,6 +448,28 @@ def choose_random_medium_non_paid_problems(count: int) -> List[Dict[str, Any]]:
     return choose_random_problems_by_difficulty(0, count, 0, excluded_slugs=None)
 
 
+def get_problem_difficulty_map_for_slugs(slugs: Set[str]) -> Dict[str, str]:
+    normalized_targets = {_normalize_slug(slug) for slug in slugs if slug}
+    if not normalized_targets:
+        return {}
+
+    difficulty_map: dict[str, str] = {}
+    remaining = set(normalized_targets)
+
+    for difficulty in ('Easy', 'Medium', 'Hard'):
+        pool = get_problem_pool(difficulty)
+        for problem in pool:
+            slug = _normalize_slug(str(problem.get('title_slug') or problem.get('titleSlug') or ''))
+            if not slug or slug not in remaining:
+                continue
+            difficulty_map[slug] = difficulty.lower()
+            remaining.remove(slug)
+            if not remaining:
+                return difficulty_map
+
+    return difficulty_map
+
+
 def get_recent_submissions(username: str, limit: int = 100) -> List[Dict[str, Any]]:
     with _client() as client:
         response = client.get(f'/user/{username}/submissions', params={'limit': limit})
@@ -461,6 +483,59 @@ def get_recent_submissions(username: str, limit: int = 100) -> List[Dict[str, An
         raise LeetCodeServiceError('Unexpected submissions payload shape from LeetCode API')
 
     return payload
+
+
+def _normalize_leetcode_submission_url(raw: str) -> Optional[str]:
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+
+    if cleaned.startswith('//'):
+        cleaned = f'https:{cleaned}'
+    elif cleaned.startswith('/'):
+        cleaned = f'https://leetcode.com{cleaned}'
+    elif not re.match(r'^https?://', cleaned, re.IGNORECASE):
+        if 'leetcode.com' in cleaned:
+            cleaned = f"https://{cleaned.lstrip('/')}"
+        else:
+            return None
+
+    if '/submission/' not in cleaned and '/submissions/' not in cleaned:
+        return None
+
+    return cleaned
+
+
+def extract_submission_url(submission: Dict[str, Any]) -> Optional[str]:
+    candidate_keys = (
+        'submissionUrl',
+        'submission_url',
+        'submissionURL',
+        'detailUrl',
+        'detail_url',
+        'url',
+    )
+    for key in candidate_keys:
+        value = submission.get(key)
+        if isinstance(value, str):
+            normalized = _normalize_leetcode_submission_url(value)
+            if normalized:
+                return normalized
+
+    id_keys = ('id', 'submissionId', 'submission_id', 'submissionID')
+    for key in id_keys:
+        value = submission.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        match = re.search(r'\d+', text)
+        if not match:
+            continue
+        return f'https://leetcode.com/submissions/detail/{match.group(0)}/'
+
+    return None
 
 
 def get_user_avatar_url(username: str) -> str | None:

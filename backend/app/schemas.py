@@ -245,11 +245,21 @@ class HistoryEvent(BaseModel):
     event_at: datetime
 
 
+class AcceptedSubmissionPublic(BaseModel):
+    participant_id: str
+    participant_leetcode_username: str
+    problem_slug: str
+    solved_at: datetime
+    source: SolveSource
+    submission_url: Optional[str]
+
+
 class HistoryResponse(BaseModel):
     room: RoomPublic
     problems: List[ProblemPublic]
     leaderboard: List[LeaderboardEntry]
     events: List[HistoryEvent]
+    accepted_submissions: List[AcceptedSubmissionPublic]
 
 
 class RoomFeedEventPublic(BaseModel):
@@ -323,6 +333,15 @@ class DashboardResponse(BaseModel):
     total_solves: int
     avg_rank: Optional[float]
     recent_rooms: List[DashboardRoomItem]
+
+
+class RecentAcceptedSubmissionPublic(BaseModel):
+    problem_slug: str
+    problem_title: str
+    problem_difficulty: Optional[str] = None
+    submitted_at: datetime
+    submission_url: Optional[str]
+    problem_url: str
 
 
 class OnboardingStartRequest(BaseModel):

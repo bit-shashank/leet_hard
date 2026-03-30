@@ -1,5 +1,7 @@
 export type RoomStatus = "lobby" | "active" | "ended";
 export type SolveSource = "auto" | "manual";
+export type UserRole = "user" | "admin";
+export type UserAccountStatus = "active" | "restricted";
 export type ProblemSource =
   | "random"
   | "neetcode_150"
@@ -28,6 +30,7 @@ export type RoomPublic = {
   has_passcode: boolean;
   sync_warning: string | null;
   topic_slugs: string[];
+  is_joinable: boolean;
 };
 
 export type ParticipantPublic = {
@@ -131,6 +134,9 @@ export type DiscoverRoomResponse = {
   host_leetcode_username: string | null;
   host_avatar_url: string | null;
   joinable: boolean;
+  is_featured: boolean;
+  featured_priority: number | null;
+  featured_until: string | null;
 };
 
 export type TopicInfo = {
@@ -182,6 +188,8 @@ export type MeResponse = {
   onboarding_required: boolean;
   onboarding_completed_at: string | null;
   profile_complete: boolean;
+  role: UserRole;
+  account_status: UserAccountStatus;
 };
 
 export type UpdateMeRequest = {
@@ -234,4 +242,72 @@ export type OnboardingVerifyResponse = {
   verified: boolean;
   verified_at: string;
   me: MeResponse;
+};
+
+export type AdminFeaturedRoomUpsertRequest = {
+  room_code: string;
+  priority: number;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  is_active: boolean;
+};
+
+export type AdminFeaturedRoomItem = {
+  room_code: string;
+  room_title: string;
+  room_status: RoomStatus;
+  scheduled_start_at: string;
+  priority: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  is_active: boolean;
+  is_currently_featured: boolean;
+};
+
+export type AdminRoomItem = {
+  room_code: string;
+  room_title: string;
+  status: RoomStatus;
+  scheduled_start_at: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_at: string;
+  participant_count: number;
+  is_joinable: boolean;
+  is_featured: boolean;
+  featured_priority: number | null;
+};
+
+export type AdminRoomUpdateRequest = {
+  room_title?: string | null;
+  scheduled_start_at?: string | null;
+  status?: RoomStatus | null;
+  is_joinable?: boolean | null;
+};
+
+export type AdminUserItem = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  primary_leetcode_username: string | null;
+  role: UserRole;
+  account_status: UserAccountStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminUserUpdateRequest = {
+  role?: UserRole | null;
+  account_status?: UserAccountStatus | null;
+};
+
+export type AdminActionLogItem = {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
 };

@@ -10,11 +10,15 @@ from sqlalchemy.orm import Session
 from app import auth
 from app.config import get_settings
 from app.db import get_db
-from app.models import User
+from app.models import User, UserRole
 
 _JWKS_CACHE: dict[str, Any] = {
     'keys': None,
     'expires_at': None,
+}
+ROLE_SCOPE_MAP: dict[UserRole, frozenset[str]] = {
+    UserRole.USER: frozenset(),
+    UserRole.ADMIN: frozenset({'admin:portal'}),
 }
 
 
@@ -114,6 +118,15 @@ def _decode_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired auth token')
 
 
+def _is_bootstrap_admin(user_id: str, email: Optional[str]) -> bool:
+    settings = get_settings()
+    if user_id in settings.admin_bootstrap_user_ids_set:
+        return True
+    if email and email.strip().lower() in settings.admin_bootstrap_emails_set:
+        return True
+    return False
+
+
 def get_current_user(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
@@ -131,12 +144,16 @@ def get_current_user(
     avatar_url = user_metadata.get('avatar_url') or claims.get('picture')
 
     user = db.scalar(select(User).where(User.id == user_id))
+    normalized_email = (str(email).strip() if email else None)
+    should_bootstrap_admin = _is_bootstrap_admin(user_id, normalized_email)
+
     if user is None:
         user = User(
             id=user_id,
-            email=(str(email).strip() if email else None),
+            email=normalized_email,
             display_name=(str(display_name).strip() if display_name else None),
             avatar_url=(str(avatar_url).strip() if avatar_url else None),
+            role=UserRole.ADMIN if should_bootstrap_admin else UserRole.USER,
         )
         db.add(user)
         db.commit()
@@ -144,8 +161,8 @@ def get_current_user(
         return user
 
     dirty = False
-    if email and user.email != str(email).strip():
-        user.email = str(email).strip()
+    if normalized_email and user.email != normalized_email:
+        user.email = normalized_email
         dirty = True
     if display_name and not user.display_name:
         user.display_name = str(display_name).strip()
@@ -153,9 +170,15 @@ def get_current_user(
     if avatar_url and not user.avatar_url:
         user.avatar_url = str(avatar_url).strip()
         dirty = True
-
     if dirty:
         db.commit()
         db.refresh(user)
 
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    scopes = ROLE_SCOPE_MAP.get(current_user.role, frozenset())
+    if 'admin:portal' not in scopes:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Admin access required')
+    return current_user

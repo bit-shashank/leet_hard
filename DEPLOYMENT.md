@@ -70,6 +70,8 @@ SYNC_INTERVAL_SECONDS=15
 AUTO_SOLVE_SYNC_ENABLED=false
 AVATAR_SYNC_TTL_SECONDS=21600
 MAX_PARTICIPANTS_PER_ROOM=50
+ADMIN_BOOTSTRAP_USER_IDS=
+ADMIN_BOOTSTRAP_EMAILS=admin@example.com
 PYTHON_VERSION=3.12.3
 ```
 
@@ -80,6 +82,7 @@ Notes:
 - Avoid `CORS_ORIGINS=*` in production when auth headers/cookies are involved.
 - Keep DB pool env conservative on Render to avoid exhausting Supabase connection limits.
 - Live room updates are polling-only (`/state` every ~5s, `/feed` every ~4s). SSE stream routes are intentionally removed.
+- `ADMIN_BOOTSTRAP_*` is for initial admin promotion. Keep it minimal, then manage roles from `/admin`.
 - After first deploy, copy your Render backend URL (example: `https://<backend-name>.onrender.com`).
 
 ## 3) Deploy Frontend on Vercel
@@ -128,6 +131,11 @@ Run these checks in order:
 - Wait for scheduled auto-start (or set near-future time in test).
 - Mark/unmark a problem manually and confirm leaderboard updates.
 - Optional: if `AUTO_SOLVE_SYNC_ENABLED=true`, confirm auto-detection updates too.
+5. Admin portal:
+- Sign in with a bootstrap-admin account.
+- Open `https://<frontend>/admin`.
+- Create one featured room and confirm it appears pinned in discover cards.
+- Update one user role and verify the action appears under Admin Logs.
 
 ## 5) Common Issues and Fixes
 

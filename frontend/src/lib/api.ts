@@ -1,4 +1,11 @@
 import type {
+  AdminActionLogItem,
+  AdminFeaturedRoomItem,
+  AdminFeaturedRoomUpsertRequest,
+  AdminRoomItem,
+  AdminRoomUpdateRequest,
+  AdminUserItem,
+  AdminUserUpdateRequest,
   CreateRoomRequest,
   CreateRoomResponse,
   ChatMessageInput,
@@ -230,4 +237,109 @@ export function verifyOnboarding(
     body: payload ?? {},
     accessToken,
   });
+}
+
+export function listAdminFeaturedRooms(
+  accessToken: string,
+  state: "all" | "active" | "scheduled" | "expired" = "all",
+) {
+  return request<AdminFeaturedRoomItem[]>(`/api/v1/admin/featured-rooms?state=${state}`, {
+    accessToken,
+  });
+}
+
+export function upsertAdminFeaturedRoom(
+  accessToken: string,
+  payload: AdminFeaturedRoomUpsertRequest,
+) {
+  return request<AdminFeaturedRoomItem>("/api/v1/admin/featured-rooms", {
+    method: "POST",
+    body: payload,
+    accessToken,
+  });
+}
+
+export function deleteAdminFeaturedRoom(accessToken: string, roomCode: string) {
+  return request<void>(`/api/v1/admin/featured-rooms/${roomCode}`, {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
+export function listAdminRooms(
+  accessToken: string,
+  opts?: {
+    statuses?: string;
+    search?: string;
+    created_from?: string;
+    created_to?: string;
+    limit?: number;
+  },
+) {
+  const query = new URLSearchParams();
+  if (opts?.statuses) query.set("statuses", opts.statuses);
+  if (opts?.search) query.set("search", opts.search);
+  if (opts?.created_from) query.set("created_from", opts.created_from);
+  if (opts?.created_to) query.set("created_to", opts.created_to);
+  if (opts?.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AdminRoomItem[]>(`/api/v1/admin/rooms${suffix}`, { accessToken });
+}
+
+export function updateAdminRoom(
+  accessToken: string,
+  roomCode: string,
+  payload: AdminRoomUpdateRequest,
+) {
+  return request<AdminRoomItem>(`/api/v1/admin/rooms/${roomCode}`, {
+    method: "PATCH",
+    body: payload,
+    accessToken,
+  });
+}
+
+export function listAdminUsers(
+  accessToken: string,
+  opts?: {
+    search?: string;
+    role?: "user" | "admin";
+    account_status?: "active" | "restricted";
+    limit?: number;
+  },
+) {
+  const query = new URLSearchParams();
+  if (opts?.search) query.set("search", opts.search);
+  if (opts?.role) query.set("role", opts.role);
+  if (opts?.account_status) query.set("account_status", opts.account_status);
+  if (opts?.limit) query.set("limit", String(opts.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AdminUserItem[]>(`/api/v1/admin/users${suffix}`, { accessToken });
+}
+
+export function updateAdminUser(
+  accessToken: string,
+  userId: string,
+  payload: AdminUserUpdateRequest,
+) {
+  return request<AdminUserItem>(`/api/v1/admin/users/${userId}`, {
+    method: "PATCH",
+    body: payload,
+    accessToken,
+  });
+}
+
+export function listAdminLogs(
+  accessToken: string,
+  opts?: {
+    limit?: number;
+    action?: string;
+    resource_type?: string;
+  },
+) {
+  const query = new URLSearchParams();
+  if (opts?.limit) query.set("limit", String(opts.limit));
+  if (opts?.action) query.set("action", opts.action);
+  if (opts?.resource_type) query.set("resource_type", opts.resource_type);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AdminActionLogItem[]>(`/api/v1/admin/logs${suffix}`, { accessToken });
 }

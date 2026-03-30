@@ -20,6 +20,11 @@ export const metadata: Metadata = {
   title: "LeetRace",
   description:
     "LeetRace lets you run scheduled coding races with friends, live leaderboards, and verified LeetCode identities.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

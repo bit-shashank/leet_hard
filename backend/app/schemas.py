@@ -3,7 +3,15 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models import ProblemSource, RoomFeedEventType, RoomStatus, SolveEventType, SolveSource
+from app.models import (
+    ProblemSource,
+    RoomFeedEventType,
+    RoomStatus,
+    SolveEventType,
+    SolveSource,
+    UserAccountStatus,
+    UserRole,
+)
 
 
 class RoomSettingsInput(BaseModel):
@@ -123,6 +131,7 @@ class RoomPublic(BaseModel):
     has_passcode: bool
     sync_warning: Optional[str]
     topic_slugs: List[str]
+    is_joinable: bool
 
 
 class LeaderboardEntry(BaseModel):
@@ -152,6 +161,9 @@ class DiscoverRoomResponse(BaseModel):
     host_leetcode_username: Optional[str]
     host_avatar_url: Optional[str]
     joinable: bool
+    is_featured: bool = False
+    featured_priority: Optional[int] = None
+    featured_until: Optional[datetime] = None
 
 
 class TopicInfo(BaseModel):
@@ -268,6 +280,8 @@ class MeResponse(BaseModel):
     onboarding_required: bool
     onboarding_completed_at: Optional[datetime]
     profile_complete: bool
+    role: UserRole
+    account_status: UserAccountStatus
 
 
 class UpdateMeRequest(BaseModel):
@@ -341,3 +355,108 @@ class OnboardingVerifyResponse(BaseModel):
     verified: bool
     verified_at: datetime
     me: MeResponse
+
+
+class AdminFeaturedRoomUpsertRequest(BaseModel):
+    room_code: str = Field(min_length=4, max_length=12)
+    priority: int = Field(default=100, ge=1, le=9999)
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    is_active: bool = True
+
+    @field_validator('room_code')
+    @classmethod
+    def normalize_room_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator('starts_at', 'ends_at')
+    @classmethod
+    def normalize_time(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return value
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    @model_validator(mode='after')
+    def validate_window(self):
+        if self.starts_at and self.ends_at and self.ends_at <= self.starts_at:
+            raise ValueError('ends_at must be after starts_at')
+        return self
+
+
+class AdminFeaturedRoomItem(BaseModel):
+    room_code: str
+    room_title: str
+    room_status: RoomStatus
+    scheduled_start_at: datetime
+    priority: int
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+    is_active: bool
+    is_currently_featured: bool
+
+
+class AdminRoomItem(BaseModel):
+    room_code: str
+    room_title: str
+    status: RoomStatus
+    scheduled_start_at: datetime
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+    created_at: datetime
+    participant_count: int
+    is_joinable: bool
+    is_featured: bool
+    featured_priority: Optional[int]
+
+
+class AdminRoomUpdateRequest(BaseModel):
+    room_title: Optional[str] = Field(default=None, min_length=3, max_length=80)
+    scheduled_start_at: Optional[datetime] = None
+    status: Optional[RoomStatus] = None
+    is_joinable: Optional[bool] = None
+
+    @field_validator('room_title')
+    @classmethod
+    def normalize_room_title(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator('scheduled_start_at')
+    @classmethod
+    def normalize_start_at(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return value
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+
+class AdminUserItem(BaseModel):
+    id: str
+    email: Optional[str]
+    display_name: Optional[str]
+    primary_leetcode_username: Optional[str]
+    role: UserRole
+    account_status: UserAccountStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminUserUpdateRequest(BaseModel):
+    role: Optional[UserRole] = None
+    account_status: Optional[UserAccountStatus] = None
+
+
+class AdminActionLogItem(BaseModel):
+    id: str
+    actor_user_id: Optional[str]
+    actor_email: Optional[str]
+    action: str
+    resource_type: str
+    resource_id: Optional[str]
+    details: dict
+    created_at: datetime

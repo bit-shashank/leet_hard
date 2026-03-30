@@ -16,6 +16,7 @@ Full-stack implementation of LeetRace, a competitive LeetCode room platform:
 - Manual-first solve toggles (optional auto solve sync via feature flag)
 - Persistent room history + solve timeline
 - User dashboard with core performance metrics and recent rooms
+- Built-in admin portal (`/admin`) for featured rooms, room moderation, user role/account management, and audit logs
 
 ## Tech Stack
 - Frontend: Next.js + Tailwind (professional coding-platform style)
@@ -88,6 +89,8 @@ Frontend app: `http://localhost:3000`
 - `SYNC_INTERVAL_SECONDS` (used only when auto solve sync is enabled)
 - `AUTO_SOLVE_SYNC_ENABLED` (`false` default for manual-only tracking)
 - `MAX_PARTICIPANTS_PER_ROOM`
+- `ADMIN_BOOTSTRAP_USER_IDS` (optional CSV/JSON list; one-time admin bootstrap by user id)
+- `ADMIN_BOOTSTRAP_EMAILS` (optional CSV/JSON list; one-time admin bootstrap by email)
 
 ### Frontend (`frontend/.env.local`)
 - `NEXT_PUBLIC_API_BASE_URL`
@@ -98,6 +101,7 @@ Frontend app: `http://localhost:3000`
 ## Deployment Notes
 - Vercel (frontend): set `NEXT_PUBLIC_API_BASE_URL` to Render backend URL.
 - Render (backend): set all backend env vars; point `DATABASE_URL` to Supabase Postgres.
+- First admin bootstrap: set either `ADMIN_BOOTSTRAP_EMAILS` or `ADMIN_BOOTSTRAP_USER_IDS`, deploy once, sign in, then manage roles from `/admin`.
 - Production processes should set `APP_ENV=prod` to force `.env` usage if local files exist in the repo.
 - Render Python version: use `3.12.3` (`PYTHON_VERSION=3.12.3`).
 - Supabase Auth: set `Site URL` to `https://leet-hard.vercel.app`.

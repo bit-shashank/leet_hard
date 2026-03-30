@@ -19,13 +19,14 @@ export function TopicSelector({
   initialVisibleCount = 8,
   showCounts = true,
 }: TopicSelectorProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!topics.length) {
     return (
       <p className="text-xs text-slate-400">No topics available yet.</p>
     );
   }
 
-  const [expanded, setExpanded] = useState(false);
   const pinnedSlugs = [
     "binary-search",
     "dynamic-programming",

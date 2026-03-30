@@ -850,7 +850,7 @@ export default function HomePage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-100">Top Rooms</h2>
             <p className="mt-1 text-sm text-slate-300">
-              Active first, then closest upcoming starts.
+              Featured rooms are pinned first, then active, then closest upcoming starts.
             </p>
           </div>
           <button
@@ -897,6 +897,11 @@ export default function HomePage() {
                       </p>
                     </div>
                     <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      {room.is_featured ? (
+                        <span className="rounded-full border border-amber-300/40 bg-amber-500/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-amber-100">
+                          Featured
+                        </span>
+                      ) : null}
                       <span
                         className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${roomStatusClass(room.status)}`}
                       >

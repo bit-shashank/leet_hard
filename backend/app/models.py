@@ -58,6 +58,16 @@ class RoomFeedEventType(str, Enum):
     LEAVE = 'leave'
 
 
+class UserRole(str, Enum):
+    USER = 'user'
+    ADMIN = 'admin'
+
+
+class UserAccountStatus(str, Enum):
+    ACTIVE = 'active'
+    RESTRICTED = 'restricted'
+
+
 class VerificationChallengeStatus(str, Enum):
     ISSUED = 'issued'
     VERIFIED = 'verified'
@@ -96,6 +106,7 @@ class Room(Base):
     ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     host_participant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     topic_slugs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_joinable: Mapped[bool] = mapped_column(Boolean, default=True)
     last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_warning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -109,6 +120,11 @@ class Room(Base):
     solve_events: Mapped[List['SolveEvent']] = relationship(
         back_populates='room', cascade='all, delete-orphan'
     )
+    featured_room: Mapped[Optional['FeaturedRoom']] = relationship(
+        back_populates='room',
+        cascade='all, delete-orphan',
+        uselist=False,
+    )
 
 
 class User(Base):
@@ -119,6 +135,28 @@ class User(Base):
     display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     primary_leetcode_username: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(
+            UserRole,
+            name='user_role',
+            native_enum=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        ),
+        default=UserRole.USER,
+        index=True,
+    )
+    account_status: Mapped[UserAccountStatus] = mapped_column(
+        SAEnum(
+            UserAccountStatus,
+            name='user_account_status',
+            native_enum=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+        ),
+        default=UserAccountStatus.ACTIVE,
+        index=True,
+    )
     leetcode_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     leetcode_username_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     onboarding_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -130,6 +168,7 @@ class User(Base):
         back_populates='user',
         cascade='all, delete-orphan',
     )
+    admin_action_logs: Mapped[List['AdminActionLog']] = relationship(back_populates='actor')
 
 
 class Participant(Base):
@@ -256,6 +295,45 @@ class RoomFeedEvent(Base):
     actor_avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FeaturedRoom(Base):
+    __tablename__ = 'featured_rooms'
+    __table_args__ = (
+        UniqueConstraint('room_id', name='uq_featured_room_room_id'),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    room_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('rooms.id', ondelete='CASCADE'), index=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    room: Mapped['Room'] = relationship(back_populates='featured_room')
+
+
+class AdminActionLog(Base):
+    __tablename__ = 'admin_action_logs'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    actor_user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    actor: Mapped[Optional['User']] = relationship(back_populates='admin_action_logs')
 
 
 class LeetCodeVerificationChallenge(Base):

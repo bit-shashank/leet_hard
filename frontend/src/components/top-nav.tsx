@@ -70,6 +70,18 @@ export function TopNav() {
           >
             Dashboard
           </Link>
+          {user && me?.role === "admin" ? (
+            <Link
+              href="/admin"
+              className={`rounded-lg px-2 py-1 text-sm transition ${
+                pathname === "/admin"
+                  ? "bg-fuchsia-500/15 text-fuchsia-100"
+                  : "text-fuchsia-200 hover:bg-fuchsia-500/10"
+              }`}
+            >
+              Admin
+            </Link>
+          ) : null}
           {user && requiresOnboarding(me) ? (
             <Link
               href="/getting-started"

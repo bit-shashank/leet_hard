@@ -10,6 +10,7 @@ from app import auth
 from app.config import get_settings
 from app.db import get_db
 from app.models import (
+    FeaturedRoom,
     Participant,
     ParticipantSolve,
     ProblemSource,
@@ -115,6 +116,8 @@ def _normalize_topic_filters(raw_slugs: list[str]) -> list[str]:
 
 
 def _is_room_joinable(room: Room) -> bool:
+    if not room.is_joinable:
+        return False
     if room.status not in (RoomStatus.LOBBY, RoomStatus.ACTIVE):
         return False
     if room.status == RoomStatus.ACTIVE and room.ends_at and _coerce_utc(room.ends_at) <= _utcnow():
@@ -143,6 +146,7 @@ def _room_to_public(room: Room) -> RoomPublic:
         has_passcode=bool(room.passcode_hash),
         sync_warning=room.sync_warning,
         topic_slugs=room.topic_slugs or [],
+        is_joinable=room.is_joinable,
     )
 
 
@@ -855,6 +859,21 @@ def discover_rooms(
         return []
 
     room_ids = [room.id for room in rooms]
+    now = _utcnow()
+
+    featured_meta_by_room_id: dict[str, tuple[bool, int | None, datetime | None]] = {}
+    featured_rows = db.scalars(
+        select(FeaturedRoom).where(
+            FeaturedRoom.room_id.in_(room_ids),
+            FeaturedRoom.is_active.is_(True),
+        )
+    ).all()
+    for featured in featured_rows:
+        starts_at = _coerce_utc(featured.starts_at)
+        ends_at = _coerce_utc(featured.ends_at)
+        within_window = (starts_at is None or starts_at <= now) and (ends_at is None or ends_at > now)
+        featured_meta_by_room_id[featured.room_id] = (within_window, featured.priority, ends_at)
+
     participant_counts = {
         room_id: count
         for room_id, count in db.execute(
@@ -879,13 +898,14 @@ def discover_rooms(
         if host_dirty:
             db.commit()
 
-    now = _utcnow()
     discovered: list[DiscoverRoomResponse] = []
     for room in rooms:
         host = hosts.get(room.host_participant_id) if room.host_participant_id else None
-        joinable = room.status in (RoomStatus.LOBBY, RoomStatus.ACTIVE)
-        if room.status == RoomStatus.ACTIVE and room.ends_at and _coerce_utc(room.ends_at) <= now:
-            joinable = False
+        joinable = _is_room_joinable(room)
+        is_featured, featured_priority, featured_until = featured_meta_by_room_id.get(
+            room.id,
+            (False, None, None),
+        )
 
         discovered.append(
             DiscoverRoomResponse(
@@ -905,10 +925,15 @@ def discover_rooms(
                 host_leetcode_username=host.leetcode_username if host else None,
                 host_avatar_url=host.avatar_url if host else None,
                 joinable=joinable,
+                is_featured=is_featured,
+                featured_priority=featured_priority if is_featured else None,
+                featured_until=featured_until if is_featured else None,
             )
         )
 
     def discover_sort_key(room_card: DiscoverRoomResponse):
+        featured_sort = 0 if room_card.is_featured else 1
+        featured_priority = room_card.featured_priority if room_card.featured_priority is not None else 999999
         if room_card.status == RoomStatus.ACTIVE:
             target = _coerce_utc(room_card.starts_at) or _coerce_utc(room_card.scheduled_start_at)
             status_priority = 0
@@ -925,7 +950,7 @@ def discover_rooms(
             distance = abs((target - now).total_seconds())
 
         created_at = _coerce_utc(room_card.created_at) or datetime.max.replace(tzinfo=timezone.utc)
-        return (distance, status_priority, created_at)
+        return (featured_sort, featured_priority, distance, status_priority, created_at)
 
     discovered.sort(key=discover_sort_key)
     return discovered[:limit]
@@ -1071,6 +1096,11 @@ def join_room(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Room has ended. Joining is closed.',
+        )
+    if not room.is_joinable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Room is not accepting new joins',
         )
 
     if not auth.verify_passcode(payload.passcode or '', room.passcode_hash):

@@ -91,6 +91,8 @@ def _to_me_response(user: User) -> MeResponse:
         onboarding_required=not profile_complete,
         onboarding_completed_at=user.onboarding_completed_at,
         profile_complete=profile_complete,
+        role=user.role,
+        account_status=user.account_status,
     )
 
 

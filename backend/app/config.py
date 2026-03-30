@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     auto_solve_sync_enabled: bool = False
     avatar_sync_ttl_seconds: int = 21600
     max_participants_per_room: int = 50
+    admin_bootstrap_user_ids: str = ''
+    admin_bootstrap_emails: str = ''
 
     @staticmethod
     def _normalize_origin(origin: str) -> str:
@@ -95,6 +97,34 @@ class Settings(BaseSettings):
     def cors_origin_regex_pattern(self) -> str | None:
         pattern = self.cors_origin_regex.strip()
         return pattern or None
+
+    @staticmethod
+    def _parse_csv_or_json_list(raw: str) -> set[str]:
+        cleaned = raw.strip()
+        if not cleaned:
+            return set()
+
+        parsed_values: list[str] = []
+        if cleaned.startswith('['):
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                parsed_values = [str(item).strip() for item in parsed if str(item).strip()]
+
+        if not parsed_values:
+            parsed_values = [part.strip() for part in cleaned.split(',') if part.strip()]
+
+        return set(parsed_values)
+
+    @property
+    def admin_bootstrap_user_ids_set(self) -> set[str]:
+        return self._parse_csv_or_json_list(self.admin_bootstrap_user_ids)
+
+    @property
+    def admin_bootstrap_emails_set(self) -> set[str]:
+        return {email.lower() for email in self._parse_csv_or_json_list(self.admin_bootstrap_emails)}
 
 
 @lru_cache(maxsize=1)

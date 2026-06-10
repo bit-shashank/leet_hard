@@ -24,6 +24,7 @@ import {
   takePendingJoinError,
   takePendingJoinRoomCode,
 } from "@/lib/auth-intent";
+import { parseCustomProblemText } from "@/lib/custom-problems";
 import { prettyDateTime } from "@/lib/format";
 import { requiresOnboarding } from "@/lib/onboarding";
 import { copyRoomShareMessage } from "@/lib/share-room";
@@ -226,6 +227,7 @@ export default function HomePage() {
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [startAtLocal, setStartAtLocal] = useState(defaultStartAtLocal);
   const [createPasscode, setCreatePasscode] = useState("");
+  const [customProblemText, setCustomProblemText] = useState("");
 
   const [roomCode, setRoomCode] = useState("");
   const [joinPasscode, setJoinPasscode] = useState("");
@@ -245,7 +247,11 @@ export default function HomePage() {
     () => easyCount + mediumCount + hardCount,
     [easyCount, mediumCount, hardCount],
   );
-  const validTotal = totalProblems >= 3 && totalProblems <= 10;
+  const customProblems = useMemo(() => parseCustomProblemText(customProblemText), [customProblemText]);
+  const customProblemCount = customProblems.length;
+  const isCustomProblemSource = problemSource === "custom";
+  const displayedProblemCount = isCustomProblemSource ? customProblemCount : totalProblems;
+  const validTotal = displayedProblemCount >= 3 && displayedProblemCount <= 10;
 
   const recentRoomCodeSet = useMemo(
     () => new Set((dashboard?.recent_rooms || []).map((room) => room.room_code.toUpperCase())),
@@ -479,7 +485,11 @@ export default function HomePage() {
     event.preventDefault();
 
     if (!validTotal) {
-      setError("Total problems must be between 3 and 10.");
+      setError(
+        isCustomProblemSource
+          ? "Custom rooms must include between 3 and 10 problems."
+          : "Total problems must be between 3 and 10.",
+      );
       return;
     }
 
@@ -516,7 +526,8 @@ export default function HomePage() {
             strict_check: strictCheck,
             duration_minutes: durationMinutes,
             start_at: parsedStartAt.toISOString(),
-            ...(selectedTopics.length ? { topic_slugs: selectedTopics } : {}),
+            ...(isCustomProblemSource ? { custom_problems: customProblems } : {}),
+            ...(!isCustomProblemSource && selectedTopics.length ? { topic_slugs: selectedTopics } : {}),
             ...(createPasscode.trim() ? { passcode: createPasscode.trim() } : {}),
           },
         },
@@ -1000,6 +1011,7 @@ export default function HomePage() {
                 className="mt-1 w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
               >
                 <option value="random">Random (all LeetCode)</option>
+                <option value="custom">Custom List</option>
                 <option value="neetcode_150">NeetCode 150</option>
                 <option value="neetcode_250">NeetCode 250</option>
                 <option value="blind_75">Blind 75</option>
@@ -1008,105 +1020,125 @@ export default function HomePage() {
               </select>
             </label>
 
-            <div className="space-y-2">
-              <p className="text-sm text-slate-200">Topics (optional)</p>
-              {topicsLoading ? (
-                <p className="text-xs text-slate-400">Loading topics...</p>
-              ) : topicsError ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                  <span>{topicsError}</span>
-                  <button
-                    type="button"
-                    onClick={() => void loadTopics()}
-                    className="rounded-full border border-slate-600/70 px-2 py-0.5 text-[11px] text-slate-200 transition hover:bg-slate-800"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : (
-                <TopicSelector
-                  topics={topics}
-                  selected={selectedTopics}
-                  onToggle={(slug) =>
-                    setSelectedTopics((prev) =>
-                      prev.includes(slug)
-                        ? prev.filter((entry) => entry !== slug)
-                        : [...prev, slug],
-                    )
-                  }
-                  showCounts={problemSource === "random"}
+            {isCustomProblemSource ? (
+              <label className="block text-sm text-slate-200">
+                Custom Problems
+                <textarea
+                  required
+                  value={customProblemText}
+                  onChange={(e) => setCustomProblemText(e.target.value)}
+                  rows={6}
+                  className="mt-1 w-full resize-y rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 font-mono text-sm text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                  placeholder={"two-sum\nhttps://leetcode.com/problems/group-anagrams/"}
                 />
-              )}
-              <p className="text-xs text-slate-400">
-                Filters problems to any selected topic.
-              </p>
-            </div>
+              </label>
+            ) : null}
 
-            <div className="grid grid-cols-3 gap-3">
-              <label className="block text-sm text-slate-200">
-                Easy
-                <NumberStepperInput
-                  min={0}
-                  max={10}
-                  required
-                  value={easyCount}
-                  onChange={setEasyCount}
-                  ariaLabel="easy problem count"
-                  wrapperClassName="mt-1"
-                  inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
-                />
-              </label>
-              <label className="block text-sm text-slate-200">
-                Medium
-                <NumberStepperInput
-                  min={0}
-                  max={10}
-                  required
-                  value={mediumCount}
-                  onChange={setMediumCount}
-                  ariaLabel="medium problem count"
-                  wrapperClassName="mt-1"
-                  inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
-                />
-              </label>
-              <label className="block text-sm text-slate-200">
-                Hard
-                <NumberStepperInput
-                  min={0}
-                  max={10}
-                  required
-                  value={hardCount}
-                  onChange={setHardCount}
-                  ariaLabel="hard problem count"
-                  wrapperClassName="mt-1"
-                  inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
-                />
-              </label>
-            </div>
+            {!isCustomProblemSource ? (
+              <>
+                <div className="space-y-2">
+                  <p className="text-sm text-slate-200">Topics (optional)</p>
+                  {topicsLoading ? (
+                    <p className="text-xs text-slate-400">Loading topics...</p>
+                  ) : topicsError ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>{topicsError}</span>
+                      <button
+                        type="button"
+                        onClick={() => void loadTopics()}
+                        className="rounded-full border border-slate-600/70 px-2 py-0.5 text-[11px] text-slate-200 transition hover:bg-slate-800"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <TopicSelector
+                      topics={topics}
+                      selected={selectedTopics}
+                      onToggle={(slug) =>
+                        setSelectedTopics((prev) =>
+                          prev.includes(slug)
+                            ? prev.filter((entry) => entry !== slug)
+                            : [...prev, slug],
+                        )
+                      }
+                      showCounts={problemSource === "random"}
+                    />
+                  )}
+                  <p className="text-xs text-slate-400">
+                    Filters problems to any selected topic.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="block text-sm text-slate-200">
+                    Easy
+                    <NumberStepperInput
+                      min={0}
+                      max={10}
+                      required
+                      value={easyCount}
+                      onChange={setEasyCount}
+                      ariaLabel="easy problem count"
+                      wrapperClassName="mt-1"
+                      inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-200">
+                    Medium
+                    <NumberStepperInput
+                      min={0}
+                      max={10}
+                      required
+                      value={mediumCount}
+                      onChange={setMediumCount}
+                      ariaLabel="medium problem count"
+                      wrapperClassName="mt-1"
+                      inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-200">
+                    Hard
+                    <NumberStepperInput
+                      min={0}
+                      max={10}
+                      required
+                      value={hardCount}
+                      onChange={setHardCount}
+                      ariaLabel="hard problem count"
+                      wrapperClassName="mt-1"
+                      inputClassName="w-full rounded-xl border border-slate-600/70 bg-slate-950/70 px-3 py-2 pr-12 text-slate-100 outline-none ring-cyan-400/60 transition focus:ring-2"
+                    />
+                  </label>
+                </div>
+              </>
+            ) : null}
 
             <div className="rounded-lg border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-sm text-slate-200">
               <p>
-                Total Problems: <span className="font-semibold text-cyan-200">{totalProblems}</span>
+                Total Problems: <span className="font-semibold text-cyan-200">{displayedProblemCount}</span>
               </p>
               <p className={`mt-1 text-xs ${validTotal ? "text-emerald-200" : "text-rose-200"}`}>
                 Allowed range: 3 to 10
               </p>
             </div>
 
-            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-sm text-slate-200">
-              <div>
-                <p className="font-medium text-slate-100">Exclude Pre-Solved</p>
-                <p className="text-xs text-slate-400">
-                  Prefer problems not solved by room members before start.
-                </p>
-              </div>
-              <input
-                type="checkbox"
-                checked={excludePreSolved}
-                onChange={(e) => setExcludePreSolved(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
-              />
-            </label>
+            {!isCustomProblemSource ? (
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-sm text-slate-200">
+                <div>
+                  <p className="font-medium text-slate-100">Exclude Pre-Solved</p>
+                  <p className="text-xs text-slate-400">
+                    Prefer problems not solved by room members before start.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={excludePreSolved}
+                  onChange={(e) => setExcludePreSolved(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-950 text-cyan-300 focus:ring-cyan-400"
+                />
+              </label>
+            ) : null}
 
             <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-950/40 px-3 py-2 text-sm text-slate-200">
               <div>

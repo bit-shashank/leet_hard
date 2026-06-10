@@ -4,6 +4,7 @@ export type UserRole = "user" | "admin";
 export type UserAccountStatus = "active" | "restricted";
 export type ProblemSource =
   | "random"
+  | "custom"
   | "neetcode_150"
   | "neetcode_250"
   | "blind_75"
@@ -50,6 +51,22 @@ export type ProblemPublic = {
   sort_order: number;
 };
 
+export type CustomProblemInput = {
+  title_slug: string;
+  title?: string | null;
+  frontend_id?: string | null;
+  url?: string | null;
+  difficulty?: "Easy" | "Medium" | "Hard";
+};
+
+export type CustomProblemPublic = {
+  title_slug: string;
+  title: string;
+  frontend_id: string | null;
+  url: string;
+  difficulty: string;
+};
+
 export type LeaderboardEntry = {
   rank: number;
   participant_id: string;
@@ -64,6 +81,7 @@ export type RoomStateResponse = {
   room: RoomPublic;
   participants: ParticipantPublic[];
   problems: ProblemPublic[];
+  host_custom_problems: CustomProblemPublic[];
   leaderboard: LeaderboardEntry[];
   my_participant_id: string | null;
   my_solved_slugs: string[];
@@ -84,6 +102,7 @@ export type CreateRoomRequest = {
     start_at: string;
     passcode?: string;
     topic_slugs?: string[];
+    custom_problems?: CustomProblemInput[];
   };
 };
 

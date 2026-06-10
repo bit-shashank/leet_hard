@@ -601,6 +601,87 @@ def test_start_room_uses_selected_problem_source(client):
     assert captured == {'source': 'blind_75'}
 
 
+def test_custom_room_starts_from_attached_problem_list_without_fetch(client):
+    test_client, SessionTest, monkeypatch = client
+
+    def _fail_selection(*_, **__):
+        raise AssertionError('random selection should not be called for custom rooms')
+
+    monkeypatch.setattr('app.routers.rooms.choose_random_problems_by_source', _fail_selection)
+
+    created = _create_room(
+        test_client,
+        settings={
+            'problem_source': 'custom',
+            'custom_problems': [
+                {'title_slug': 'two-sum'},
+                {'title_slug': 'https://leetcode.com/problems/group-anagrams/'},
+                {'title_slug': 'merge-k-sorted-lists', 'difficulty': 'Hard'},
+            ],
+            'duration_minutes': 60,
+        },
+    )
+    room_code = created['room']['room_code']
+    host_token = created['participant_token']
+    room = created['room']
+    assert room['problem_source'] == 'custom'
+    assert room['problem_count'] == 3
+    assert room['easy_count'] == 0
+    assert room['medium_count'] == 2
+    assert room['hard_count'] == 1
+
+    lobby = test_client.get(
+        f'/api/v1/rooms/{room_code}/state',
+        headers=_auth_headers(host_token),
+    )
+    assert lobby.status_code == 200
+    custom_slugs = [problem['title_slug'] for problem in lobby.json()['host_custom_problems']]
+    assert custom_slugs == ['two-sum', 'group-anagrams', 'merge-k-sorted-lists']
+    assert lobby.json()['problems'] == []
+
+    started = _start_room(test_client, SessionTest, room_code, host_token)
+    assert started['room']['status'] == 'active'
+
+    active = test_client.get(
+        f'/api/v1/rooms/{room_code}/state',
+        headers=_auth_headers(host_token),
+    )
+    assert active.status_code == 200
+    payload = active.json()
+    assert payload['host_custom_problems'] == []
+    assert [problem['title_slug'] for problem in payload['problems']] == [
+        'two-sum',
+        'group-anagrams',
+        'merge-k-sorted-lists',
+    ]
+    assert payload['problems'][1]['url'] == 'https://leetcode.com/problems/group-anagrams/'
+    assert payload['problems'][2]['difficulty'] == 'Hard'
+
+
+def test_custom_room_requires_unique_problem_list(client):
+    test_client, _, _ = client
+    start_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+
+    response = test_client.post(
+        '/api/v1/rooms',
+        json={
+            'room_title': 'Bad Custom Room',
+            'settings': {
+                'problem_source': 'custom',
+                'custom_problems': [
+                    {'title_slug': 'two-sum'},
+                    {'title_slug': 'two-sum'},
+                    {'title_slug': 'group-anagrams'},
+                ],
+                'duration_minutes': 60,
+                'start_at': start_at,
+            },
+        },
+        headers=_auth_headers('bad_custom_host_lc'),
+    )
+    assert response.status_code == 422
+
+
 def test_start_room_sheet_source_insufficient_pool_returns_4xx(client):
     test_client, SessionTest, monkeypatch = client
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -14,9 +15,74 @@ from app.models import (
 )
 
 
+CUSTOM_PROBLEM_SLUG_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,254}$')
+
+
+def _extract_problem_slug(value: str) -> str:
+    cleaned = value.strip()
+    if '/problems/' in cleaned:
+        cleaned = cleaned.split('/problems/', 1)[1]
+    cleaned = cleaned.strip().strip('/')
+    cleaned = cleaned.split('?', 1)[0].split('#', 1)[0].split('/', 1)[0].lower()
+    if not CUSTOM_PROBLEM_SLUG_RE.fullmatch(cleaned):
+        raise ValueError('Problem must be a LeetCode slug or problem URL')
+    return cleaned
+
+
+def _title_from_slug(slug: str) -> str:
+    return ' '.join(part.capitalize() for part in slug.split('-') if part) or slug
+
+
+class CustomProblemInput(BaseModel):
+    title_slug: str = Field(min_length=1, max_length=255)
+    title: Optional[str] = Field(default=None, max_length=255)
+    frontend_id: Optional[str] = Field(default=None, max_length=50)
+    url: Optional[str] = Field(default=None, max_length=500)
+    difficulty: str = 'Medium'
+
+    @field_validator('title_slug')
+    @classmethod
+    def normalize_title_slug(cls, value: str) -> str:
+        return _extract_problem_slug(value)
+
+    @field_validator('title', 'frontend_id', 'url', mode='before')
+    @classmethod
+    def normalize_optional_text(cls, value: Optional[object]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError('Value must be text')
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator('difficulty', mode='before')
+    @classmethod
+    def normalize_difficulty(cls, value: Optional[object]) -> str:
+        if value is None:
+            return 'Medium'
+        if not isinstance(value, str):
+            raise ValueError('Difficulty must be text')
+        cleaned = value.strip().lower()
+        difficulty_by_value = {
+            'easy': 'Easy',
+            'medium': 'Medium',
+            'hard': 'Hard',
+        }
+        if cleaned not in difficulty_by_value:
+            raise ValueError('Difficulty must be Easy, Medium, or Hard')
+        return difficulty_by_value[cleaned]
+
+    @model_validator(mode='after')
+    def populate_defaults(self):
+        self.title = self.title or _title_from_slug(self.title_slug)
+        self.url = self.url or f'https://leetcode.com/problems/{self.title_slug}/'
+        return self
+
+
 class RoomSettingsInput(BaseModel):
     problem_count: Optional[int] = Field(default=None, ge=3, le=10)
     problem_source: ProblemSource = ProblemSource.RANDOM
+    custom_problems: List[CustomProblemInput] = Field(default_factory=list)
     easy_count: int = Field(default=0, ge=0, le=10)
     medium_count: int = Field(default=4, ge=0, le=10)
     hard_count: int = Field(default=0, ge=0, le=10)
@@ -46,6 +112,25 @@ class RoomSettingsInput(BaseModel):
 
     @model_validator(mode='after')
     def validate_total_problem_count(self):
+        if self.problem_source == ProblemSource.CUSTOM:
+            if len(self.custom_problems) < 3 or len(self.custom_problems) > 10:
+                raise ValueError('Custom rooms must include between 3 and 10 problems')
+
+            seen: set[str] = set()
+            for problem in self.custom_problems:
+                if problem.title_slug in seen:
+                    raise ValueError(f'Duplicate custom problem: {problem.title_slug}')
+                seen.add(problem.title_slug)
+
+            self.problem_count = len(self.custom_problems)
+            self.easy_count = sum(1 for problem in self.custom_problems if problem.difficulty == 'Easy')
+            self.medium_count = sum(1 for problem in self.custom_problems if problem.difficulty == 'Medium')
+            self.hard_count = sum(1 for problem in self.custom_problems if problem.difficulty == 'Hard')
+            self.topic_slugs = []
+            self.exclude_pre_solved = False
+            return self
+
+        self.custom_problems = []
         total = self.easy_count + self.medium_count + self.hard_count
         if total < 3 or total > 10:
             raise ValueError('Total problems must be between 3 and 10')
@@ -109,6 +194,14 @@ class ProblemPublic(BaseModel):
     url: str
     difficulty: str
     sort_order: int
+
+
+class CustomProblemPublic(BaseModel):
+    title_slug: str
+    title: str
+    frontend_id: Optional[str]
+    url: str
+    difficulty: str
 
 
 class RoomPublic(BaseModel):
@@ -176,6 +269,7 @@ class RoomStateResponse(BaseModel):
     room: RoomPublic
     participants: List[ParticipantPublic]
     problems: List[ProblemPublic]
+    host_custom_problems: List[CustomProblemPublic] = Field(default_factory=list)
     leaderboard: List[LeaderboardEntry]
     my_participant_id: Optional[str]
     my_solved_slugs: List[str]

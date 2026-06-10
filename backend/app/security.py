@@ -5,6 +5,7 @@ import httpx
 from fastapi import Depends, Header, HTTPException, status
 from jose import JWTError, jwt
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import auth
@@ -156,8 +157,16 @@ def get_current_user(
             role=UserRole.ADMIN if should_bootstrap_admin else UserRole.USER,
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing_user = db.scalar(select(User).where(User.id == user_id))
+            if existing_user is None:
+                raise
+            user = existing_user
+        else:
+            db.refresh(user)
         return user
 
     dirty = False

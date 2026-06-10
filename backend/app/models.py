@@ -33,6 +33,7 @@ class RoomStatus(str, Enum):
 
 class ProblemSource(str, Enum):
     RANDOM = 'random'
+    CUSTOM = 'custom'
     NEETCODE_150 = 'neetcode_150'
     NEETCODE_250 = 'neetcode_250'
     BLIND_75 = 'blind_75'
@@ -106,6 +107,7 @@ class Room(Base):
     ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     host_participant_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     topic_slugs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    custom_problems: Mapped[list[dict]] = mapped_column(JSON, default=list)
     is_joinable: Mapped[bool] = mapped_column(Boolean, default=True)
     last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_warning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

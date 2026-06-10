@@ -30,6 +30,7 @@ from app.schemas import (
     ChatMessageInput,
     CreateRoomRequest,
     CreateRoomResponse,
+    CustomProblemPublic,
     DiscoverRoomResponse,
     HistoryEvent,
     HistoryResponse,
@@ -171,6 +172,24 @@ def _problem_to_public(problem: RoomProblem) -> ProblemPublic:
         difficulty=problem.difficulty,
         sort_order=problem.sort_order,
     )
+
+
+def _custom_problem_to_public(problem: dict) -> CustomProblemPublic:
+    slug = str(problem.get('title_slug') or problem.get('titleSlug') or '').strip()
+    return CustomProblemPublic(
+        title_slug=slug,
+        title=str(problem.get('title') or slug or 'Untitled Problem'),
+        frontend_id=(str(problem.get('frontend_id')) if problem.get('frontend_id') else None),
+        url=str(problem.get('url') or f'https://leetcode.com/problems/{slug}/'),
+        difficulty=str(problem.get('difficulty') or 'Medium'),
+    )
+
+
+def _custom_problems_from_settings(settings) -> list[dict]:
+    return [
+        problem.model_dump()
+        for problem in settings.custom_problems
+    ]
 
 
 def _feed_event_to_public(event: RoomFeedEvent) -> RoomFeedEventPublic:
@@ -682,43 +701,48 @@ def _activate_room(db: Session, room: Room, now: Optional[datetime] = None) -> N
     if isinstance(problem_source, str):
         problem_source = ProblemSource(problem_source)
 
-    excluded_slugs: set[str] = set()
     exclusion_fetch_errors: list[str] = []
     relaxed_exclusion = False
-    if room.exclude_pre_solved:
-        excluded_slugs, exclusion_fetch_errors = _collect_pre_solved_problem_slugs(db, room)
-    topic_slugs = set(room.topic_slugs or [])
-
-    try:
+    if problem_source == ProblemSource.CUSTOM:
+        selected = list(room.custom_problems or [])
+        if len(selected) < 3 or len(selected) > 10:
+            raise ProblemSelectionError('Custom rooms must include between 3 and 10 problems')
+    else:
+        excluded_slugs: set[str] = set()
         if room.exclude_pre_solved:
+            excluded_slugs, exclusion_fetch_errors = _collect_pre_solved_problem_slugs(db, room)
+        topic_slugs = set(room.topic_slugs or [])
+
+        try:
+            if room.exclude_pre_solved:
+                selected = choose_random_problems_by_source(
+                    problem_source,
+                    easy_count=room.easy_count,
+                    medium_count=room.medium_count,
+                    hard_count=room.hard_count,
+                    excluded_slugs=excluded_slugs,
+                    topic_slugs=topic_slugs,
+                )
+            else:
+                selected = choose_random_problems_by_source(
+                    problem_source,
+                    easy_count=room.easy_count,
+                    medium_count=room.medium_count,
+                    hard_count=room.hard_count,
+                    topic_slugs=topic_slugs,
+                )
+        except ProblemSelectionError:
+            if not room.exclude_pre_solved:
+                raise
+            relaxed_exclusion = True
             selected = choose_random_problems_by_source(
                 problem_source,
                 easy_count=room.easy_count,
                 medium_count=room.medium_count,
                 hard_count=room.hard_count,
-                excluded_slugs=excluded_slugs,
+                excluded_slugs=None,
                 topic_slugs=topic_slugs,
             )
-        else:
-            selected = choose_random_problems_by_source(
-                problem_source,
-                easy_count=room.easy_count,
-                medium_count=room.medium_count,
-                hard_count=room.hard_count,
-                topic_slugs=topic_slugs,
-            )
-    except ProblemSelectionError:
-        if not room.exclude_pre_solved:
-            raise
-        relaxed_exclusion = True
-        selected = choose_random_problems_by_source(
-            problem_source,
-            easy_count=room.easy_count,
-            medium_count=room.medium_count,
-            hard_count=room.hard_count,
-            excluded_slugs=None,
-            topic_slugs=topic_slugs,
-        )
 
     room.starts_at = now
     room.ends_at = now + timedelta(minutes=room.duration_minutes)
@@ -826,6 +850,16 @@ def _build_room_state(
         room=_room_to_public(room),
         participants=[_participant_to_public(p) for p in participants],
         problems=[_problem_to_public(problem) for problem in problems],
+        host_custom_problems=(
+            [_custom_problem_to_public(problem) for problem in (room.custom_problems or [])]
+            if (
+                participant
+                and participant.is_host
+                and room.problem_source == ProblemSource.CUSTOM
+                and room.status == RoomStatus.LOBBY
+            )
+            else []
+        ),
         leaderboard=_build_leaderboard(db, room),
         my_participant_id=participant.id if participant else None,
         my_solved_slugs=my_solved_slugs,
@@ -1034,7 +1068,11 @@ def create_room(
             detail='Room start time must be in the future',
         )
 
-    topic_slugs = _normalize_topic_filters(payload.settings.topic_slugs)
+    topic_slugs = (
+        []
+        if payload.settings.problem_source == ProblemSource.CUSTOM
+        else _normalize_topic_filters(payload.settings.topic_slugs)
+    )
 
     room_code = None
     for _ in range(20):
@@ -1068,6 +1106,7 @@ def create_room(
         scheduled_start_at=scheduled_start_at,
         status=RoomStatus.LOBBY,
         topic_slugs=topic_slugs,
+        custom_problems=_custom_problems_from_settings(payload.settings),
     )
     db.add(room)
     db.flush()
@@ -1269,7 +1308,11 @@ def update_room_settings(
             detail='Scheduled start time has passed. Settings are locked.',
         )
 
-    topic_slugs = _normalize_topic_filters(payload.settings.topic_slugs)
+    topic_slugs = (
+        []
+        if payload.settings.problem_source == ProblemSource.CUSTOM
+        else _normalize_topic_filters(payload.settings.topic_slugs)
+    )
 
     room_title = payload.room_title.strip()
     if not room_title:
@@ -1297,6 +1340,7 @@ def update_room_settings(
     room.duration_minutes = payload.settings.duration_minutes
     room.scheduled_start_at = scheduled_start_at
     room.topic_slugs = topic_slugs
+    room.custom_problems = _custom_problems_from_settings(payload.settings)
     if payload.settings.passcode is not None:
         room.passcode_hash = auth.hash_passcode(payload.settings.passcode)
 
